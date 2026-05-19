@@ -185,10 +185,21 @@ function onTouchStart(e) {
   if (e.touches.length === 1) {
     const t = e.touches[0], r = CANVAS.el.getBoundingClientRect();
     const ox = t.clientX - r.left, oy = t.clientY - r.top;
-    // Pe tabletă/telefon: 1 deget în modul select = PAN direct
+    // Pe tabletă/telefon: 1 deget în modul select
+    // Dacă e un obiect sub deget → selectare/drag
+    // Dacă e fundal liber → PAN
     if (CANVAS.tool === 'select') {
-      CANVAS.panning = true;
-      CANVAS.panStart = { x: ox - CANVAS.panX, y: oy - CANVAS.panY };
+      const { wx, wy } = s2w(ox, oy);
+      const hit = hitTest(wx, wy);
+      const isOsmBg = hit && (hit.type==='road_poly'||hit.type==='roundabout'||hit.type==='building_poly');
+      if (!hit || isOsmBg) {
+        // Fundal → PAN
+        CANVAS.panning = true;
+        CANVAS.panStart = { x: ox - CANVAS.panX, y: oy - CANVAS.panY };
+      } else {
+        // Obiect → selectare/drag
+        onPointerDown({ offsetX: ox, offsetY: oy, button: 0, ctrlKey: false });
+      }
     } else {
       onPointerDown({ offsetX: ox, offsetY: oy, button: 0, ctrlKey: false });
     }
@@ -235,9 +246,12 @@ function onTouchMove(e) {
       CANVAS.panX = ox - CANVAS.panStart.x;
       CANVAS.panY = oy - CANVAS.panStart.y;
       drawCanvas();
-    } else {
+    } else if (CANVAS.draggingHandle || CANVAS.selected?._drag) {
+      onPointerMove({ offsetX: ox, offsetY: oy });
+    } else if (CANVAS.tool !== 'select') {
       onPointerMove({ offsetX: ox, offsetY: oy });
     }
+    // În select mode fără obiect activ → ignore (a fost inițiat ca pan)
   }
 }
 function onTouchEnd(e) { 
@@ -468,6 +482,25 @@ function drawGrid(ctx, W, H) {
   for (let x = Math.floor(-W/gs)*gs; x < W*2; x+=gs) { ctx.beginPath(); ctx.moveTo(x,-H); ctx.lineTo(x,H*2); ctx.stroke(); }
   for (let y = Math.floor(-H/gs)*gs; y < H*2; y+=gs) { ctx.beginPath(); ctx.moveTo(-W,y); ctx.lineTo(W*2,y); ctx.stroke(); }
   ctx.restore();
+}
+
+// Centrează canvas pe toate obiectele existente
+function fitCanvasToObjects() {
+  // Dacă avem obiecte OSM, centrăm pe originea OSM
+  if (OSM.scale > 0 && OSM.canvasOffsetX > 0) {
+    const radiusPx = 120 * OSM.scale; // estimare
+    const canvasSize = Math.min(CANVAS.width, CANVAS.height) || 800;
+    const z = Math.min(1.5, Math.max(0.08, (canvasSize * 0.40) / radiusPx));
+    CANVAS.zoom = z;
+    CANVAS.panX = (CANVAS.width  / 2) - (OSM.canvasOffsetX * z);
+    CANVAS.panY = (CANVAS.height / 2) - (OSM.canvasOffsetY * z);
+    document.getElementById('canvas-zoom-display').textContent = Math.round(z*100)+'%';
+    drawCanvas(); return;
+  }
+  // Fără OSM: zoom 1, centrat pe canvas
+  CANVAS.zoom = 1; CANVAS.panX = 0; CANVAS.panY = 0;
+  document.getElementById('canvas-zoom-display').textContent = '100%';
+  drawCanvas();
 }
 
 function drawObj(ctx, o) {
@@ -731,8 +764,7 @@ function initToolbar() {
     this.textContent = labels[CANVAS.bgType]; drawCanvas();
   });
   document.getElementById('canvas-zoom-fit').addEventListener('click', () => {
-    CANVAS.zoom=1; CANVAS.panX=0; CANVAS.panY=0;
-    document.getElementById('canvas-zoom-display').textContent='100%'; drawCanvas();
+    fitCanvasToObjects();
   });
   document.addEventListener('keydown', e => {
     if (e.key==='z'&&(e.ctrlKey||e.metaKey)) { e.preventDefault(); e.shiftKey?redo():undo(); }
@@ -1606,7 +1638,10 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
     const radiusPx = radiusMeters * OSM.scale;
     const initZoom = Math.min(1.5, Math.max(0.08, (canvasSize * 0.40) / radiusPx));
     CANVAS.zoom = initZoom;
-    CANVAS.panX = 0; CANVAS.panY = 0;
+    // Centrează: world origin (canvasOffsetX/Y) să apară la centrul ecranului
+    // screen = world * zoom + pan  =>  pan = screenCenter - worldCenter * zoom
+    CANVAS.panX = (CANVAS.width  / 2) - (OSM.canvasOffsetX * initZoom);
+    CANVAS.panY = (CANVAS.height / 2) - (OSM.canvasOffsetY * initZoom);
     document.getElementById('canvas-zoom-display').textContent = Math.round(initZoom*100)+'%';
 
     saveHistory();
