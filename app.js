@@ -28,6 +28,9 @@ const CANVAS = {
   history: [], historyIdx: -1,
   tempLine: null,
   draggingHandle: null, handleStart: null,
+  rotateMode: false,      // true = modul rotire activ
+  longPressTimer: null,   // timer pt long press
+  rightDragStart: null,   // pt rotire cu click-dreapta drag
   // Staged: snapshot obiect înainte de editare live
   // Modificările live sunt TEMPORARE până la "Aplică"
   stagedOriginal: null,  // snapshot original înainte de drag/rotate/scale
@@ -53,6 +56,8 @@ const ITEM_MAP = {
   'sign-semaphore':{ emoji: '🚦', label: 'Semafor', w: 22, h: 48 },
   'sign-crossing': { emoji: '🚸', label: 'Trecere pietoni', w: 28, h: 28 },
   'sign-noentry':  { emoji: '⛔', label: 'Intrare interzisă', w: 28, h: 28 },
+  'sign-speed-50': { emoji: '🔵', label: '50 km/h', w: 28, h: 28 },
+  'sign-oneway':   { emoji: '➡️', label: 'Sens unic', w: 40, h: 22 },
   'impact-mark':   { emoji: '💥', label: 'Punct impact', w: 32, h: 32 },
   'skid-mark':     { emoji: '〰️', label: 'Urmă frânare', w: 60, h: 12 },
   'debris':        { emoji: '💢', label: 'Resturi', w: 24, h: 24 },
@@ -262,6 +267,26 @@ function onTouchEnd(e) {
 
 function onPointerDown(e) {
   const { wx, wy } = s2w(e.offsetX, e.offsetY);
+  // CLICK DREAPTA pe obiect = intră în rotire cu drag
+  if (e.button === 2) {
+    const hit = hitTest(wx, wy);
+    if (hit && hit.type !== 'road_poly' && hit.type !== 'roundabout' && hit.type !== 'building_poly') {
+      e.preventDefault();
+      if (!CANVAS.selected || CANVAS.selected !== hit) {
+        CANVAS.selected = hit;
+        CANVAS.stagedOriginal = JSON.stringify({x:hit.x,y:hit.y,rotation:hit.rotation||0,scale:hit.scale||1,label:hit.label||'',note:hit.note||''});
+        showPropsFor(hit); showQuickControls(hit);
+      }
+      const cx = hit.x + hit.w*(hit.scale||1)/2;
+      const cy = hit.y + hit.h*(hit.scale||1)/2;
+      hit._cx = cx; hit._cy = cy;
+      CANVAS.draggingHandle = 'rotate';
+      CANVAS.handleStart = { cx, cy, startRot: hit.rotation||0 };
+      CANVAS.drawing = true;
+      CANVAS.el.style.cursor = 'grabbing';
+      return;
+    }
+  }
   if (e.button === 1 || (e.button === 0 && e.ctrlKey)) {
     CANVAS.panning = true;
     CANVAS.panStart = { x: e.offsetX - CANVAS.panX, y: e.offsetY - CANVAS.panY }; return;
@@ -271,7 +296,7 @@ function onPointerDown(e) {
     // Check handle-uri pe obiectul deja selectat
     if (sel && sel._hRot && sel._hSc) {
       const hRotPos = sel._hRot, hScPos = sel._hSc;
-      const hitR = 14/CANVAS.zoom;  // rază hit mai mare = mai ușor de prins
+      const hitR = 20/CANVAS.zoom;  // rază hit generoasă
       if (Math.hypot(wx-hRotPos.x, wy-hRotPos.y) < hitR) {
         // Drag handle ROTIRE
         CANVAS.draggingHandle = 'rotate';
@@ -339,17 +364,19 @@ function onPointerDown(e) {
   if (CANVAS.tool === 'rotate') {
     const hit = hitTest(wx, wy);
     if (hit && hit.type !== 'road_poly' && hit.type !== 'roundabout' && hit.type !== 'building_poly') {
-      // Selectează și intră în modul rotire prin drag
-      CANVAS.selected = hit;
-      CANVAS.stagedOriginal = JSON.stringify({x:hit.x,y:hit.y,rotation:hit.rotation||0,scale:hit.scale||1,label:hit.label||'',note:hit.note||''});
+      if (CANVAS.selected !== hit) {
+        CANVAS.selected = hit;
+        CANVAS.stagedOriginal = JSON.stringify({x:hit.x,y:hit.y,rotation:hit.rotation||0,scale:hit.scale||1,label:hit.label||'',note:hit.note||''});
+        showPropsFor(hit); showQuickControls(hit);
+      }
       CANVAS.editMode = false;
       CANVAS.draggingHandle = 'rotate';
       const cx = hit.x + hit.w*(hit.scale||1)/2;
       const cy = hit.y + hit.h*(hit.scale||1)/2;
-      CANVAS.handleStart = { cx, cy, startRot: hit.rotation||0 };
+      CANVAS.handleStart = { cx, cy, startRot: hit.rotation||0, startAngle: Math.atan2(wy-cy, wx-cx) };
       hit._cx = cx; hit._cy = cy;
       CANVAS.drawing = true;
-      showPropsFor(hit);
+      CANVAS.el.style.cursor = 'grabbing';
       drawCanvas();
     }
     return;
@@ -372,12 +399,20 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   const { wx, wy } = s2w(e.offsetX, e.offsetY);
   if (CANVAS.panning) { CANVAS.panX = e.offsetX - CANVAS.panStart.x; CANVAS.panY = e.offsetY - CANVAS.panStart.y; drawCanvas(); return; }
-  // Handle ROTIRE (mouse/touch drag pe handle portocaliu)
+  // Handle ROTIRE — delta față de unghiul de start pentru rotire relativă
   if (CANVAS.draggingHandle === 'rotate' && CANVAS.selected) {
-    const { cx, cy } = CANVAS.handleStart;
-    // Unghiul față de centrul obiectului, 0° = sus
-    const angle = Math.atan2(wx - cx, -(wy - cy)) * 180 / Math.PI;
-    CANVAS.selected.rotation = ((angle % 360) + 360) % 360;
+    const { cx, cy, startRot, startAngle } = CANVAS.handleStart;
+    const curAngle = Math.atan2(wy - cy, wx - cx);
+    let delta;
+    if (startAngle !== undefined) {
+      // Rotire relativă (drag circular) — mai intuitivă
+      delta = (curAngle - startAngle) * 180 / Math.PI;
+      CANVAS.selected.rotation = ((startRot + delta) % 360 + 360) % 360;
+    } else {
+      // Rotire absolută (handle portocaliu)
+      const angle = Math.atan2(wx - cx, -(wy - cy)) * 180 / Math.PI;
+      CANVAS.selected.rotation = ((angle % 360) + 360) % 360;
+    }
     CANVAS.editMode = true;
     syncPropsToObject(CANVAS.selected);
     showEditingIndicator();
@@ -413,6 +448,7 @@ function onPointerMove(e) {
     }
   }
   if (CANVAS.tool === 'select') CANVAS.el.style.cursor = 'default';
+  if (CANVAS.tool === 'rotate') CANVAS.el.style.cursor = 'crosshair';
 }
 
 function onPointerUp(e) {
@@ -576,19 +612,319 @@ function drawObj(ctx, o) {
     const cx = o.x + W/2, cy = o.y + H/2;
     ctx.translate(cx, cy);
     ctx.rotate((o.rotation||0) * Math.PI/180);
-    // Desenează silueta vehiculului (vedere de sus)
-    drawVehicleTopView(ctx, o, W, H);
-    // Etichetă număr înmatriculare
+    // Dispatch per tip
+    if (o.type && o.type.startsWith('sign-')) {
+      drawSign(ctx, o, W, H);
+    } else if (o.type && ['impact-mark','skid-mark','debris','north-arrow','cone'].includes(o.type)) {
+      drawMarking(ctx, o, W, H);
+    } else {
+      drawVehicleTopView(ctx, o, W, H);
+    }
+    // Etichetă
     if (o.label) {
-      ctx.font = `bold ${Math.max(8, Math.min(14, H*0.22))}px monospace`;
+      ctx.font = `bold ${Math.max(7, Math.min(14, H*0.22))}px monospace`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const tw = ctx.measureText(o.label).width + 6, th = H*0.24;
-      ctx.fillStyle = '#111c'; ctx.fillRect(-tw/2, H*0.28, tw, th);
-      ctx.fillStyle = '#fff'; ctx.fillText(o.label, 0, H*0.28 + th/2);
+      const tw = ctx.measureText(o.label).width + 6, th = Math.max(10, H*0.24);
+      ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(-tw/2, H*0.5+2, tw, th);
+      ctx.fillStyle = '#fff'; ctx.fillText(o.label, 0, H*0.5+2+th/2);
     }
   }
   if (o._preview) { ctx.globalAlpha = 1; ctx.setLineDash([]); }
   ctx.restore();
+}
+
+
+// ════ INDICATOARE RUTIERE (canvas drawing) ════════════════════
+function drawSign(ctx, o, W, H) {
+  const S = Math.min(W, H); // dimensiune de referinta
+  switch(o.type) {
+
+    case 'sign-stop': {
+      // Octogon rosu cu text STOP
+      const sides = 8, r = S*0.48;
+      ctx.beginPath();
+      for(let i=0;i<sides;i++){
+        const a = (Math.PI/sides)*(2*i+1) - Math.PI/2;
+        i===0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+              : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+      }
+      ctx.closePath();
+      ctx.fillStyle = '#cc0000'; ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = S*0.07; ctx.stroke();
+      ctx.strokeStyle = '#cc0000'; ctx.lineWidth = S*0.04;
+      ctx.beginPath();
+      for(let i=0;i<sides;i++){
+        const a = (Math.PI/sides)*(2*i+1) - Math.PI/2;
+        const ri = r - S*0.1;
+        i===0 ? ctx.moveTo(Math.cos(a)*ri, Math.sin(a)*ri)
+              : ctx.lineTo(Math.cos(a)*ri, Math.sin(a)*ri);
+      }
+      ctx.closePath(); ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font=`bold ${S*0.32}px Arial`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('STOP',0,0);
+      // Stalp
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.48,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-yield': {
+      // Triunghi rosu cu varf jos (Cedati trecerea)
+      const h = S*0.82;
+      ctx.beginPath();
+      ctx.moveTo(0, -h*0.62);
+      ctx.lineTo(h*0.6, h*0.38);
+      ctx.lineTo(-h*0.6, h*0.38);
+      ctx.closePath();
+      ctx.fillStyle='#cc0000'; ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=S*0.08; ctx.stroke();
+      // Triunghi interior alb
+      ctx.beginPath();
+      ctx.moveTo(0, -h*0.45);
+      ctx.lineTo(h*0.44, h*0.28);
+      ctx.lineTo(-h*0.44, h*0.28);
+      ctx.closePath();
+      ctx.fillStyle='#fff'; ctx.fill();
+      ctx.strokeStyle='#cc0000'; ctx.lineWidth=S*0.04; ctx.stroke();
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.38,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-priority': {
+      // Romb galben cu alb — drum cu prioritate
+      const r = S*0.46;
+      ctx.save(); ctx.rotate(Math.PI/4);
+      ctx.fillStyle='#ffdd00';
+      ctx.fillRect(-r,-r,r*2,r*2);
+      ctx.strokeStyle='#fff'; ctx.lineWidth=S*0.08; ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.fillRect(-r*0.62,-r*0.62,r*1.24,r*1.24);
+      ctx.fillStyle='#ffdd00'; ctx.fillRect(-r*0.52,-r*0.52,r*1.04,r*1.04);
+      ctx.restore();
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.46,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-semaphore': {
+      // Semafor cu 3 lumini
+      const bw = S*0.52, bh = S*1.6;
+      // Corp negru
+      ctx.fillStyle='#222';
+      ctx.beginPath(); roundRect(ctx,-bw/2,-bh/2,bw,bh,bw*0.15); ctx.fill();
+      ctx.strokeStyle='#555'; ctx.lineWidth=S*0.04; ctx.stroke();
+      // Lumina rosie
+      ctx.fillStyle='#ff2200';
+      ctx.shadowColor='#ff2200'; ctx.shadowBlur=8;
+      ctx.beginPath(); ctx.arc(0,-bh*0.3,bw*0.32,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+      // Lumina galbena (stinsa)
+      ctx.fillStyle='#443300';
+      ctx.beginPath(); ctx.arc(0,0,bw*0.32,0,Math.PI*2); ctx.fill();
+      // Lumina verde
+      ctx.fillStyle='#00aa00';
+      ctx.shadowColor='#00ff00'; ctx.shadowBlur=6;
+      ctx.beginPath(); ctx.arc(0,bh*0.3,bw*0.32,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+      // Stalp
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.06,bh/2,S*0.12,S*0.6);
+      break;
+    }
+
+    case 'sign-crossing': {
+      // Triunghi galben cu silueta pieton
+      const h = S*0.82;
+      ctx.beginPath();
+      ctx.moveTo(0,-h*0.62); ctx.lineTo(h*0.6,h*0.38); ctx.lineTo(-h*0.6,h*0.38);
+      ctx.closePath();
+      ctx.fillStyle='#ffcc00'; ctx.fill();
+      ctx.strokeStyle='#333'; ctx.lineWidth=S*0.06; ctx.stroke();
+      // Silueta pieton
+      ctx.fillStyle='#222';
+      ctx.beginPath(); ctx.arc(0,-h*0.22,h*0.1,0,Math.PI*2); ctx.fill();
+      ctx.fillRect(-h*0.08,-h*0.12,h*0.16,h*0.2);
+      ctx.save(); ctx.rotate(-0.3);
+      ctx.fillRect(-h*0.04,-h*0.12,h*0.06,h*0.22); ctx.restore();
+      ctx.save(); ctx.rotate(0.2);
+      ctx.fillRect(h*0.0,-h*0.12,h*0.06,h*0.22); ctx.restore();
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.38,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-noentry': {
+      // Cerc rosu cu bara alba orizontala
+      ctx.fillStyle='#cc0000';
+      ctx.beginPath(); ctx.arc(0,0,S*0.46,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#fff'; ctx.lineWidth=S*0.07; ctx.stroke();
+      ctx.fillStyle='#fff';
+      ctx.fillRect(-S*0.36,-S*0.12,S*0.72,S*0.24);
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.46,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-speed-50': {
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(0,0,S*0.46,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#cc0000'; ctx.lineWidth=S*0.14; ctx.stroke();
+      ctx.fillStyle='#111'; ctx.font=`bold ${S*0.4}px Arial`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('50',0,0);
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.46,S*0.1,S*0.35);
+      break;
+    }
+
+    case 'sign-oneway': {
+      // Sageata alba pe fond albastru
+      ctx.fillStyle='#003399';
+      ctx.beginPath(); roundRect(ctx,-S*0.46,-S*0.28,S*0.92,S*0.56,S*0.08); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath();
+      ctx.moveTo(S*0.36,0); ctx.lineTo(S*0.06,-S*0.22); ctx.lineTo(S*0.06,-S*0.08);
+      ctx.lineTo(-S*0.36,-S*0.08); ctx.lineTo(-S*0.36,S*0.08);
+      ctx.lineTo(S*0.06,S*0.08); ctx.lineTo(S*0.06,S*0.22);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#888'; ctx.fillRect(-S*0.05,S*0.28,S*0.1,S*0.35);
+      break;
+    }
+
+    default: {
+      // Fallback: cerc albastru cu text tip
+      ctx.fillStyle='#003399';
+      ctx.beginPath(); ctx.arc(0,0,S*0.46,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font=`${S*0.22}px Arial`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(o.name||'?',0,0);
+    }
+  }
+}
+
+// ════ MARCAJE RUTIERE ════════════════════════════════════════════
+function drawMarking(ctx, o, W, H) {
+  switch(o.type) {
+
+    case 'impact-mark': {
+      // Stea de impact cu explodare
+      const R = Math.min(W,H)*0.5;
+      ctx.save();
+      // Cercuri concentrice rosii
+      [0.95,0.7,0.45].forEach((r,i)=>{
+        ctx.beginPath(); ctx.arc(0,0,R*r,0,Math.PI*2);
+        ctx.strokeStyle = i===0?'#ff0000':i===1?'#ff4400':'#ff8800';
+        ctx.lineWidth = R*0.06; ctx.stroke();
+      });
+      // Linii de fisura (8 directii)
+      ctx.strokeStyle='#ff0000'; ctx.lineWidth=R*0.06;
+      for(let i=0;i<8;i++){
+        const a=i*Math.PI/4, len=R*(0.5+Math.random()*0.4);
+        ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*len,Math.sin(a)*len);
+        ctx.stroke();
+      }
+      // X central
+      ctx.strokeStyle='#ff0000'; ctx.lineWidth=R*0.1;
+      ctx.beginPath(); ctx.moveTo(-R*0.22,-R*0.22); ctx.lineTo(R*0.22,R*0.22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(R*0.22,-R*0.22); ctx.lineTo(-R*0.22,R*0.22); ctx.stroke();
+      ctx.restore();
+      break;
+    }
+
+    case 'skid-mark': {
+      // Urme de frana — dungi negre paralele
+      const nLines = 3;
+      ctx.save();
+      for(let li=0;li<nLines;li++){
+        const yOff = (li-(nLines-1)/2) * H*0.22;
+        // Urma cu variatie de densitate
+        const grad = ctx.createLinearGradient(-W/2,0,W/2,0);
+        grad.addColorStop(0,'rgba(20,20,20,0.1)');
+        grad.addColorStop(0.3,'rgba(20,20,20,0.85)');
+        grad.addColorStop(0.7,'rgba(20,20,20,0.9)');
+        grad.addColorStop(1,'rgba(20,20,20,0.2)');
+        ctx.fillStyle=grad;
+        ctx.fillRect(-W/2, yOff-H*0.08, W, H*0.16);
+        // Striuri de cauciuc
+        ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=H*0.02;
+        for(let j=0;j<6;j++){
+          ctx.beginPath();
+          ctx.moveTo(-W/2+j*W/6, yOff-H*0.08);
+          ctx.lineTo(-W/2+j*W/6+W*0.04, yOff+H*0.08);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      break;
+    }
+
+    case 'debris': {
+      // Resturi - obiecte imprastiate
+      const R = Math.min(W,H)*0.45;
+      ctx.save();
+      const pieces = [
+        {x:-R*0.3,y:-R*0.4,r:R*0.18,c:'#888'},
+        {x: R*0.4,y:-R*0.2,r:R*0.14,c:'#666'},
+        {x:-R*0.5,y: R*0.2,r:R*0.22,c:'#999'},
+        {x: R*0.2,y: R*0.45,r:R*0.16,c:'#777'},
+        {x: R*0.0,y:-R*0.1,r:R*0.12,c:'#aaa'},
+        {x:-R*0.1,y: R*0.1,r:R*0.1, c:'#555'},
+      ];
+      pieces.forEach(p=>{
+        ctx.fillStyle=p.c;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; ctx.stroke();
+      });
+      // Cateva fragmente triunghiulare
+      ctx.fillStyle='#cc6600';
+      ctx.beginPath(); ctx.moveTo(R*0.1,-R*0.35); ctx.lineTo(R*0.3,-R*0.15); ctx.lineTo(-R*0.05,-R*0.1); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      break;
+    }
+
+    case 'north-arrow': {
+      // Compas nord - sageata N cu cerc
+      const R = Math.min(W,H)*0.46;
+      ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=R*0.06;
+      ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.stroke();
+      // Sageata N (rosu)
+      ctx.fillStyle='#cc0000';
+      ctx.beginPath(); ctx.moveTo(0,-R*0.88); ctx.lineTo(R*0.25,0); ctx.lineTo(-R*0.25,0); ctx.closePath(); ctx.fill();
+      // Sageata S (alb)
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.moveTo(0,R*0.88); ctx.lineTo(R*0.25,0); ctx.lineTo(-R*0.25,0); ctx.closePath(); ctx.fill();
+      // Linii E-W
+      ctx.strokeStyle='rgba(255,255,255,0.5)'; ctx.lineWidth=R*0.06;
+      ctx.beginPath(); ctx.moveTo(-R,0); ctx.lineTo(-R*0.3,0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(R*0.3,0); ctx.lineTo(R,0); ctx.stroke();
+      // Litera N
+      ctx.fillStyle='#fff'; ctx.font=`bold ${R*0.38}px Arial`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('N',0,-R*1.25);
+      break;
+    }
+
+    case 'cone': {
+      // Con de trafic portocaliu (vedere de sus = elipsa)
+      const rw = W*0.44, rh = H*0.44;
+      // Umbra
+      ctx.fillStyle='rgba(0,0,0,0.2)';
+      ctx.beginPath(); ctx.ellipse(W*0.06,H*0.06,rw,rh,0,0,Math.PI*2); ctx.fill();
+      // Corp
+      ctx.fillStyle='#ff6600';
+      ctx.beginPath(); ctx.ellipse(0,0,rw,rh,0,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=2; ctx.stroke();
+      // Banda alba
+      ctx.fillStyle='rgba(255,255,255,0.8)';
+      ctx.beginPath(); ctx.ellipse(0,-rh*0.1,rw*0.6,rh*0.18,0,0,Math.PI*2); ctx.fill();
+      // Varf (centru mai inchis)
+      ctx.fillStyle='rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(0,rh*0.1,rw*0.25,rh*0.25,0,0,Math.PI*2); ctx.fill();
+      break;
+    }
+
+    default: {
+      ctx.fillStyle=o.color||'#ffcc00';
+      ctx.beginPath(); ctx.arc(0,0,Math.min(W,H)*0.46,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font=`${Math.min(W,H)*0.3}px Arial`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(o.emoji||'?',0,0);
+    }
+  }
 }
 
 // ─── SILUETE VEHICULE VEDERE DE SUS ─── fiecare tip distinct ──
@@ -1073,9 +1409,14 @@ function drawSelection(ctx, o) {
     ctx.beginPath(); ctx.moveTo(topMid.x, topMid.y); ctx.lineTo(hRotLocal.x, hRotLocal.y);
     ctx.strokeStyle='rgba(255,136,0,0.7)'; ctx.lineWidth=1.5/CANVAS.zoom; ctx.stroke();
     // Cerc portocaliu
-    ctx.beginPath(); ctx.arc(hRotLocal.x, hRotLocal.y, 9/CANVAS.zoom, 0, Math.PI*2);
-    ctx.fillStyle='#ff8800'; ctx.fill();
-    ctx.strokeStyle='#fff'; ctx.lineWidth=2/CANVAS.zoom; ctx.stroke();
+    ctx.beginPath(); ctx.arc(hRotLocal.x, hRotLocal.y, 14/CANVAS.zoom, 0, Math.PI*2);
+    ctx.fillStyle='#ff6600'; ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2.5/CANVAS.zoom; ctx.stroke();
+    // Text hint
+    ctx.font = `bold ${10/CANVAS.zoom}px Arial`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='#fff';
+    ctx.fillText('↻', hRotLocal.x, hRotLocal.y);
     // Săgeată rotire în cerc
     ctx.save();
     ctx.translate(hRotLocal.x, hRotLocal.y);
