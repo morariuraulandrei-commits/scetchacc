@@ -270,20 +270,24 @@ function onPointerDown(e) {
     const sel = CANVAS.selected;
     // Check handle-uri pe obiectul deja selectat
     if (sel && sel._hRot && sel._hSc) {
-      const rot = sel._hRot, sc = sel._hSc;
-      const hr = 10/CANVAS.zoom, hs = 10/CANVAS.zoom;
-      if (Math.hypot(wx-rot.x, wy-rot.y) < hr) {
+      const hRotPos = sel._hRot, hScPos = sel._hSc;
+      const hitR = 14/CANVAS.zoom;  // rază hit mai mare = mai ușor de prins
+      if (Math.hypot(wx-hRotPos.x, wy-hRotPos.y) < hitR) {
         // Drag handle ROTIRE
         CANVAS.draggingHandle = 'rotate';
-        CANVAS.handleStart = { wx, wy, rot: sel.rotation||0, cx: sel._cx, cy: sel._cy };
-        CANVAS.drawing = true; return;
+        CANVAS.handleStart = { cx: sel._cx, cy: sel._cy, startRot: sel.rotation||0 };
+        CANVAS.drawing = true;
+        CANVAS.el.style.cursor = 'grab';
+        return;
       }
-      if (Math.abs(wx-sc.x)<hs && Math.abs(wy-sc.y)<hs) {
+      if (Math.hypot(wx-hScPos.x, wy-hScPos.y) < hitR) {
         // Drag handle SCALE
         CANVAS.draggingHandle = 'scale';
-        const scv = sel.scale||1;
-        CANVAS.handleStart = { wx, wy, scale: scv, dist: Math.hypot(wx-sel._cx, wy-sel._cy)||1 };
-        CANVAS.drawing = true; return;
+        const startDist = Math.hypot(wx-sel._cx, wy-sel._cy)||1;
+        CANVAS.handleStart = { scale: sel.scale||1, dist: startDist };
+        CANVAS.drawing = true;
+        CANVAS.el.style.cursor = 'nwse-resize';
+        return;
       }
     }
     CANVAS.draggingHandle = null;
@@ -342,7 +346,8 @@ function onPointerMove(e) {
   // Handle ROTIRE (mouse/touch drag pe handle portocaliu)
   if (CANVAS.draggingHandle === 'rotate' && CANVAS.selected) {
     const { cx, cy } = CANVAS.handleStart;
-    const angle = Math.atan2(wy - cy, wx - cx) * 180 / Math.PI + 90;
+    // Unghiul față de centrul obiectului, 0° = sus
+    const angle = Math.atan2(wx - cx, -(wy - cy)) * 180 / Math.PI;
     CANVAS.selected.rotation = ((angle % 360) + 360) % 360;
     CANVAS.editMode = true;
     syncPropsToObject(CANVAS.selected);
@@ -367,13 +372,26 @@ function onPointerMove(e) {
   if (CANVAS.drawing && CANVAS.tool === 'line') {
     CANVAS.tempLine = { x1: CANVAS.startX, y1: CANVAS.startY, x2: wx, y2: wy }; drawCanvas(); return;
   }
+  // Cursor hover pe handle-uri
+  if (!CANVAS.drawing && CANVAS.tool === 'select' && CANVAS.selected?._hRot) {
+    const sel = CANVAS.selected;
+    const hitR = 14/CANVAS.zoom;
+    if (Math.hypot(wx-sel._hRot.x, wy-sel._hRot.y) < hitR) {
+      CANVAS.el.style.cursor = 'grab'; return;
+    }
+    if (Math.hypot(wx-sel._hSc.x, wy-sel._hSc.y) < hitR) {
+      CANVAS.el.style.cursor = 'nwse-resize'; return;
+    }
+  }
+  if (CANVAS.tool === 'select') CANVAS.el.style.cursor = 'default';
 }
 
 function onPointerUp(e) {
   if (CANVAS.panning) { CANVAS.panning = false; return; }
   if (CANVAS.draggingHandle) {
     CANVAS.draggingHandle = null; CANVAS.drawing = false;
-    CANVAS.editMode = true; // marcat ca modificat, așteaptă Aplică
+    CANVAS.editMode = true;
+    CANVAS.el.style.cursor = 'default';
     // NU saveHistory — doar la Aplică
     return;
   }
@@ -691,35 +709,79 @@ function drawTempLine(ctx) {
 
 function drawSelection(ctx, o) {
   ctx.save();
-  const pad = 8/CANVAS.zoom;
+  const pad = 10/CANVAS.zoom;
   if (o.type === 'line') {
     ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom; ctx.setLineDash([4/CANVAS.zoom,3/CANVAS.zoom]);
     ctx.strokeRect(Math.min(o.x,o.x2)-pad, Math.min(o.y,o.y2)-pad, Math.abs(o.x2-o.x)+pad*2, Math.abs(o.y2-o.y)+pad*2);
     ctx.setLineDash([]);
   } else if (o.type !== 'road_poly' && o.type !== 'roundabout' && o.type !== 'building_poly') {
     const sc = o.scale||1;
-    const bx = o.x-pad, by = o.y-pad, bw = o.w*sc+pad*2, bh = o.h*sc+pad*2;
-    const cx = o.x+o.w*sc/2, cy = o.y+o.h*sc/2;
-    // Rotire aplicată și pe selection box
-    ctx.translate(cx,cy); ctx.rotate((o.rotation||0)*Math.PI/180); ctx.translate(-cx,-cy);
-    // Chenar selectie
-    ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom; ctx.setLineDash([4/CANVAS.zoom,3/CANVAS.zoom]);
-    ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([]);
-    // Handle rotire (sus-centru) — cerc portocaliu
-    const hRot = { x: cx, y: by - 18/CANVAS.zoom };
-    ctx.beginPath(); ctx.arc(hRot.x, hRot.y, 7/CANVAS.zoom, 0, Math.PI*2);
-    ctx.fillStyle = '#ff8800'; ctx.fill();
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5/CANVAS.zoom; ctx.stroke();
-    // Linie de la chenar la handle rotire
-    ctx.beginPath(); ctx.moveTo(cx,by); ctx.lineTo(hRot.x,hRot.y);
-    ctx.strokeStyle='rgba(255,136,0,0.6)'; ctx.lineWidth=1/CANVAS.zoom; ctx.stroke();
-    // Handle scale (colț dreapta-jos) — pătrat verde
-    const hSc = { x: bx+bw, y: by+bh };
-    ctx.fillStyle = '#00cc44'; ctx.strokeStyle='#fff'; ctx.lineWidth=1.5/CANVAS.zoom;
-    const hs = 8/CANVAS.zoom;
-    ctx.fillRect(hSc.x-hs/2,hSc.y-hs/2,hs,hs); ctx.strokeRect(hSc.x-hs/2,hSc.y-hs/2,hs,hs);
-    // Stochează pozițiile handle-urilor pentru hit test
-    o._hRot = hRot; o._hSc = hSc; o._bx=bx; o._by=by; o._bw=bw; o._bh=bh; o._cx=cx; o._cy=cy;
+    const hw = o.w*sc/2, hh = o.h*sc/2;
+    const cx = o.x + hw, cy = o.y + hh;
+    const rad = (o.rotation||0) * Math.PI/180;
+
+    // Funcție ajutătoare: rotește un punct față de centru
+    function rot(px, py) {
+      const dx=px-cx, dy=py-cy;
+      return { x: cx + dx*Math.cos(rad) - dy*Math.sin(rad),
+               y: cy + dx*Math.sin(rad) + dy*Math.cos(rad) };
+    }
+
+    // Cele 4 colțuri ale bounding box rotit
+    const corners = [
+      rot(cx-hw-pad, cy-hh-pad), rot(cx+hw+pad, cy-hh-pad),
+      rot(cx+hw+pad, cy+hh+pad), rot(cx-hw-pad, cy+hh+pad),
+    ];
+
+    // Desenează chenar rotit
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x, corners[0].y);
+    corners.forEach(c => ctx.lineTo(c.x, c.y));
+    ctx.closePath();
+    ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom;
+    ctx.setLineDash([5/CANVAS.zoom,3/CANVAS.zoom]); ctx.stroke(); ctx.setLineDash([]);
+
+    // Handle ROTIRE — deasupra centrului sus, rotit cu obiectul
+    const hRotLocal = rot(cx, cy-hh-pad-22/CANVAS.zoom);
+    // Linie de la centru-sus la handle
+    const topMid = rot(cx, cy-hh-pad);
+    ctx.beginPath(); ctx.moveTo(topMid.x, topMid.y); ctx.lineTo(hRotLocal.x, hRotLocal.y);
+    ctx.strokeStyle='rgba(255,136,0,0.7)'; ctx.lineWidth=1.5/CANVAS.zoom; ctx.stroke();
+    // Cerc portocaliu
+    ctx.beginPath(); ctx.arc(hRotLocal.x, hRotLocal.y, 9/CANVAS.zoom, 0, Math.PI*2);
+    ctx.fillStyle='#ff8800'; ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2/CANVAS.zoom; ctx.stroke();
+    // Săgeată rotire în cerc
+    ctx.save();
+    ctx.translate(hRotLocal.x, hRotLocal.y);
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5/CANVAS.zoom;
+    ctx.beginPath(); ctx.arc(0, 0, 4/CANVAS.zoom, 0.3, Math.PI*1.7);
+    ctx.stroke();
+    // Vârf săgeată
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.moveTo(4/CANVAS.zoom*Math.cos(Math.PI*1.7)-2/CANVAS.zoom, 4/CANVAS.zoom*Math.sin(Math.PI*1.7));
+    ctx.lineTo(4/CANVAS.zoom*Math.cos(Math.PI*1.7)+1.5/CANVAS.zoom, 4/CANVAS.zoom*Math.sin(Math.PI*1.7)-3/CANVAS.zoom);
+    ctx.lineTo(4/CANVAS.zoom*Math.cos(Math.PI*1.7)+1.5/CANVAS.zoom, 4/CANVAS.zoom*Math.sin(Math.PI*1.7)+1/CANVAS.zoom);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // Handle SCALE — colț dreapta-jos, rotit cu obiectul
+    const hScLocal = rot(cx+hw+pad, cy+hh+pad);
+    const hs = 10/CANVAS.zoom;
+    ctx.save();
+    ctx.translate(hScLocal.x, hScLocal.y); ctx.rotate(rad);
+    ctx.fillStyle='#00cc44'; ctx.strokeStyle='#fff'; ctx.lineWidth=2/CANVAS.zoom;
+    ctx.fillRect(-hs/2,-hs/2,hs,hs); ctx.strokeRect(-hs/2,-hs/2,hs,hs);
+    // Săgeată diagonală în pătrat
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5/CANVAS.zoom;
+    ctx.beginPath(); ctx.moveTo(-hs*0.3,-hs*0.3); ctx.lineTo(hs*0.3,hs*0.3); ctx.stroke();
+    ctx.restore();
+
+    // Stochează în world coords NEROTITE pentru hit-test corect
+    o._hRot = hRotLocal;  // world coords
+    o._hSc  = hScLocal;   // world coords
+    o._cx = cx; o._cy = cy;
+    o._hw = hw+pad; o._hh = hh+pad;
   }
   ctx.restore();
 }
