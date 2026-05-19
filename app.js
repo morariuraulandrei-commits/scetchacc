@@ -37,16 +37,16 @@ const CANVAS = {
 };
 
 const ITEM_MAP = {
-  car:             { emoji: '🚗', label: 'Autoturism', w: 60, h: 30 },
-  truck:           { emoji: '🚛', label: 'Camion', w: 90, h: 36 },
-  moto:            { emoji: '🏍️', label: 'Motocicletă', w: 40, h: 20 },
-  tram:            { emoji: '🚋', label: 'Tramvai', w: 110, h: 36 },
-  bus:             { emoji: '🚌', label: 'Autobuz', w: 90, h: 34 },
-  bike:            { emoji: '🚲', label: 'Bicicletă', w: 36, h: 20 },
-  van:             { emoji: '🚐', label: 'Microbuz', w: 70, h: 30 },
-  ambulance:       { emoji: '🚑', label: 'Ambulanță', w: 70, h: 30 },
-  pedestrian:      { emoji: '🚶', label: 'Pieton', w: 20, h: 36 },
-  animal:          { emoji: '🐄', label: 'Animal', w: 40, h: 28 },
+  car:             { emoji: '🚗', label: 'Autoturism', w: 36, h: 16 },
+  truck:           { emoji: '🚛', label: 'Camion', w: 72, h: 22 },
+  moto:            { emoji: '🏍️', label: 'Motocicletă', w: 22, h: 10 },
+  tram:            { emoji: '🚋', label: 'Tramvai', w: 144, h: 22 },
+  bus:             { emoji: '🚌', label: 'Autobuz', w: 96, h: 22 },
+  bike:            { emoji: '🚲', label: 'Bicicletă', w: 18, h: 8 },
+  van:             { emoji: '🚐', label: 'Microbuz', w: 48, h: 18 },
+  ambulance:       { emoji: '🚑', label: 'Ambulanță', w: 48, h: 18 },
+  pedestrian:      { emoji: '🚶', label: 'Pieton', w: 5, h: 5 },
+  animal:          { emoji: '🐄', label: 'Animal', w: 16, h: 10 },
   'sign-stop':     { emoji: '🛑', label: 'STOP', w: 28, h: 28 },
   'sign-priority': { emoji: '🔶', label: 'Prioritate', w: 28, h: 28 },
   'sign-yield':    { emoji: '⚠️', label: 'Cedează', w: 28, h: 28 },
@@ -486,21 +486,154 @@ function drawObj(ctx, o) {
       ctx.fillText(o.label, (o.x+o.x2)/2, (o.y+o.y2)/2 - 6/CANVAS.zoom);
     }
   } else {
-    const sc = o.scale||1, cx = o.x+o.w*sc/2, cy = o.y+o.h*sc/2;
-    ctx.translate(cx, cy); ctx.rotate((o.rotation||0)*Math.PI/180);
-    const fs = Math.min(o.w,o.h)*sc*0.9;
-    ctx.font = `${fs}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(o.emoji||'?', 0, 0);
+    const sc = o.scale||1;
+    const W = o.w * sc, H = o.h * sc;
+    const cx = o.x + W/2, cy = o.y + H/2;
+    ctx.translate(cx, cy);
+    ctx.rotate((o.rotation||0) * Math.PI/180);
+    // Desenează silueta vehiculului (vedere de sus)
+    drawVehicleTopView(ctx, o, W, H);
+    // Etichetă număr înmatriculare
     if (o.label) {
-      ctx.font = `bold ${10/CANVAS.zoom}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      const tw = ctx.measureText(o.label).width + 6/CANVAS.zoom, th = 13/CANVAS.zoom;
-      ctx.fillStyle = (o.color||'#e8b000')+'99';
-      ctx.fillRect(-tw/2, o.h*sc/2+2/CANVAS.zoom, tw, th);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(o.label, 0, o.h*sc/2+3/CANVAS.zoom);
+      ctx.font = `bold ${Math.max(8, Math.min(14, H*0.22))}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(o.label).width + 6, th = H*0.24;
+      ctx.fillStyle = '#111c'; ctx.fillRect(-tw/2, H*0.28, tw, th);
+      ctx.fillStyle = '#fff'; ctx.fillText(o.label, 0, H*0.28 + th/2);
     }
   }
   ctx.restore();
+}
+
+// ─── SILUETE VEHICULE VEDERE DE SUS ───────────────────────────
+function drawVehicleTopView(ctx, o, W, H) {
+  const type = o.type;
+  const col = o.color || '#e8b000';
+  const shadow = 'rgba(0,0,0,0.35)';
+
+  // Umbră
+  ctx.fillStyle = shadow;
+  ctx.beginPath();
+  roundRect(ctx, -W/2+3, -H/2+3, W, H, Math.min(W,H)*0.15);
+  ctx.fill();
+
+  if (type === 'pedestrian') {
+    // Pieton - cerc corp + elipsă cap
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(0, H*0.1, W*0.38, H*0.38, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffe0b2';
+    ctx.beginPath(); ctx.arc(0, -H*0.32, W*0.28, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#0008'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(0, H*0.1, W*0.38, H*0.38, 0, 0, Math.PI*2); ctx.stroke();
+    drawLabel(ctx, o.name||'Pieton', 0, H*0.55, col);
+    return;
+  }
+
+  if (type === 'animal') {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(0, 0, W*0.45, H*0.45, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#0008'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.font = `${Math.min(W,H)*0.7}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(o.emoji||'🐄', 0, 0);
+    return;
+  }
+
+  // ─── MAȘINI / CAMIOANE / BUS etc ───
+  // Corp principal
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  roundRect(ctx, -W/2, -H/2, W, H, Math.min(W,H)*0.14);
+  ctx.fill();
+  ctx.strokeStyle = '#0006'; ctx.lineWidth = Math.max(1, H*0.04); ctx.stroke();
+
+  // Parbriz față (sus) - dreptunghi semi-transparent
+  const pW = W*0.68, pH = H*0.18;
+  ctx.fillStyle = 'rgba(180,220,255,0.55)';
+  ctx.beginPath();
+  roundRect(ctx, -pW/2, -H/2 + H*0.06, pW, pH, 3);
+  ctx.fill();
+  ctx.strokeStyle = '#0003'; ctx.lineWidth = 0.5; ctx.stroke();
+
+  // Luneta spate (jos)
+  ctx.fillStyle = 'rgba(180,220,255,0.35)';
+  ctx.beginPath();
+  roundRect(ctx, -pW/2*0.85, H/2 - H*0.06 - pH*0.8, pW*0.85, pH*0.8, 3);
+  ctx.fill();
+
+  if (type === 'car' || type === 'van' || type === 'ambulance') {
+    // Roți (4 colțuri)
+    drawWheel(ctx, -W/2-H*0.08, -H*0.3, H*0.16, H*0.28);
+    drawWheel(ctx,  W/2+H*0.08-H*0.16, -H*0.3, H*0.16, H*0.28);
+    drawWheel(ctx, -W/2-H*0.08,  H*0.02, H*0.16, H*0.28);
+    drawWheel(ctx,  W/2+H*0.08-H*0.16,  H*0.02, H*0.16, H*0.28);
+    // Indicatoare direcție față
+    ctx.fillStyle = '#ff8800';
+    ctx.fillRect(-W/2+2, -H/2+2, W*0.12, H*0.07);
+    ctx.fillRect( W/2-2-W*0.12, -H/2+2, W*0.12, H*0.07);
+  } else if (type === 'moto' || type === 'bike') {
+    // Doar 2 roți
+    drawWheel(ctx, -W*0.28, -H/2-H*0.06, H*0.22, H*0.22);
+    drawWheel(ctx,  W*0.08, H/2-H*0.16,  H*0.22, H*0.22);
+    // Corp mai îngust
+    ctx.fillStyle = col;
+    ctx.beginPath(); roundRect(ctx, -W*0.18, -H/2, W*0.36, H, H*0.15); ctx.fill();
+  } else if (type === 'truck' || type === 'bus' || type === 'tram') {
+    // 6 roți (camioane/bus)
+    drawWheel(ctx, -W/2-H*0.1, -H*0.36, H*0.2, H*0.3);
+    drawWheel(ctx,  W/2+H*0.1-H*0.2, -H*0.36, H*0.2, H*0.3);
+    drawWheel(ctx, -W/2-H*0.1,  0,      H*0.2, H*0.3);
+    drawWheel(ctx,  W/2+H*0.1-H*0.2,  0,      H*0.2, H*0.3);
+    drawWheel(ctx, -W/2-H*0.1,  H*0.2,  H*0.2, H*0.3);
+    drawWheel(ctx,  W/2+H*0.1-H*0.2,  H*0.2,  H*0.2, H*0.3);
+    // Separator cabină/remorcă
+    ctx.strokeStyle = '#0005'; ctx.lineWidth = H*0.05;
+    ctx.beginPath(); ctx.moveTo(-W*0.28, -H/2); ctx.lineTo(-W*0.28, H/2); ctx.stroke();
+    if (type === 'ambulance') {
+      ctx.fillStyle = '#fff'; ctx.font = `bold ${H*0.5}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('+', 0, 0);
+    }
+  }
+
+  // Săgeată direcție (față = sus)
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  const aw = W*0.2, ah = H*0.12;
+  ctx.beginPath();
+  ctx.moveTo(0, -H/2-ah*0.5);
+  ctx.lineTo( aw/2, -H/2+ah*0.5);
+  ctx.lineTo(-aw/2, -H/2+ah*0.5);
+  ctx.closePath(); ctx.fill();
+
+  // Tip vehicul label mic
+  if (!o.label && o.name) {
+    drawLabel(ctx, o.name, 0, H*0.62, col);
+  }
+}
+
+function drawWheel(ctx, x, y, w, h) {
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); roundRect(ctx, x, y, w, h, w*0.3); ctx.fill();
+  ctx.fillStyle = '#444';
+  ctx.beginPath(); roundRect(ctx, x+w*0.15, y+h*0.1, w*0.7, h*0.8, w*0.2); ctx.fill();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w/2, h/2);
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y); ctx.arcTo(x+w,y, x+w,y+r, r);
+  ctx.lineTo(x+w, y+h-r); ctx.arcTo(x+w,y+h, x+w-r,y+h, r);
+  ctx.lineTo(x+r, y+h); ctx.arcTo(x,y+h, x,y+h-r, r);
+  ctx.lineTo(x, y+r); ctx.arcTo(x,y, x+r,y, r);
+  ctx.closePath();
+}
+
+function drawLabel(ctx, text, x, y, col) {
+  ctx.font = `bold ${Math.max(7,Math.min(11, 10))}px sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  const tw = ctx.measureText(text).width + 4;
+  ctx.fillStyle = col+'bb';
+  ctx.fillRect(x-tw/2, y, tw, 10);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(text, x, y+1);
 }
 
 function drawArrow(ctx, fx,fy,tx,ty,size,color) {
