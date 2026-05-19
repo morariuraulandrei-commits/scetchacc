@@ -1184,33 +1184,8 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
       });
     }
 
-    // ── D. NODURI SPECIALE: semafoare, treceri, stop, mini-sens ──
-    const specialNodes = data.elements.filter(e=>e.type==='node' && e.tags);
-    for (const node of specialNodes) {
-      const tags = node.tags || {};
-      const hw = tags.highway || tags.railway || '';
-      const { x, y } = geo2px(node.lat, node.lon);
-      let emoji=null, name=null, w=26, h=26, type='osm-sign';
-
-      if (hw==='traffic_signals')   { emoji='🚦'; name='Semafor'; w=20; h=44; type='sign-semaphore'; }
-      else if (hw==='crossing')     { emoji='🚸'; name='Trecere pietoni'; }
-      else if (hw==='stop')         { emoji='🛑'; name='STOP'; }
-      else if (hw==='give_way')     { emoji='⚠️'; name='Cedează trecerea'; }
-      else if (hw==='mini_roundabout'){ emoji='🔄'; name='Mini-sens giratoriu'; }
-      else if (hw==='level_crossing'){ emoji='🚂'; name='Trecere cale ferată'; }
-      else if (tags.amenity==='bus_stop') { emoji='🚌'; name='Stație autobuz'; }
-      else if (tags.amenity==='taxi')    { emoji='🚕'; name='Stație taxi'; }
-
-      if (emoji) {
-        newObjs.push({
-          id: uid(), type,
-          x: x-w/2, y: y-h/2, w, h,
-          rotation: 0, scale: 1,
-          emoji, name, label: '', color: '#e74c3c', note: '', personLink: '',
-          osmGenerated: true,
-        });
-      }
-    }
+    // Semafoare/treceri/indicatoare — excluse din generare automată
+    // Se plasează manual din toolbar după zoom
 
     // ── E. CENTRUL / LOCUL ACCIDENTULUI ──
     const { x: cx0, y: cy0 } = geo2px(lat, lng);
@@ -1234,8 +1209,8 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
     saveHistory();
     drawCanvas();
 
-    const nR = ways.length, nB = buildings.length, nS = specialNodes.filter(n=>n.tags?.highway||n.tags?.railway||n.tags?.amenity).length;
-    toast(`✅ ${nR} drumuri · ${nB} clădiri · ${nS} semne  |  Pinch zoom + drag cu degetul`, 'success');
+    const nR = ways.length, nB = buildings.length;
+    toast(`✅ ${nR} drumuri · ${nB} clădiri  |  Pinch zoom + 1 deget pan`, 'success');
 
   } catch(err) {
     console.error('OSM sketch error:', err);
