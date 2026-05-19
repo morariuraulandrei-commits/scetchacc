@@ -177,7 +177,14 @@ function onTouchStart(e) {
   _lastTouches = Array.from(e.touches);
   if (e.touches.length === 1) {
     const t = e.touches[0], r = CANVAS.el.getBoundingClientRect();
-    onPointerDown({ offsetX: t.clientX - r.left, offsetY: t.clientY - r.top, button: 0, ctrlKey: false });
+    const ox = t.clientX - r.left, oy = t.clientY - r.top;
+    // Pe tabletă/telefon: 1 deget în modul select = PAN direct
+    if (CANVAS.tool === 'select') {
+      CANVAS.panning = true;
+      CANVAS.panStart = { x: ox - CANVAS.panX, y: oy - CANVAS.panY };
+    } else {
+      onPointerDown({ offsetX: ox, offsetY: oy, button: 0, ctrlKey: false });
+    }
   }
 }
 function onTouchMove(e) {
@@ -194,10 +201,21 @@ function onTouchMove(e) {
   }
   if (e.touches.length === 1) {
     const t = e.touches[0], r = CANVAS.el.getBoundingClientRect();
-    onPointerMove({ offsetX: t.clientX - r.left, offsetY: t.clientY - r.top });
+    const ox = t.clientX - r.left, oy = t.clientY - r.top;
+    if (CANVAS.panning) {
+      CANVAS.panX = ox - CANVAS.panStart.x;
+      CANVAS.panY = oy - CANVAS.panStart.y;
+      drawCanvas();
+    } else {
+      onPointerMove({ offsetX: ox, offsetY: oy });
+    }
   }
 }
-function onTouchEnd(e) { e.preventDefault(); onPointerUp({ offsetX: 0, offsetY: 0 }); }
+function onTouchEnd(e) { 
+  e.preventDefault(); 
+  if (CANVAS.panning) { CANVAS.panning = false; return; }
+  onPointerUp({ offsetX: 0, offsetY: 0 }); 
+}
 
 function onPointerDown(e) {
   const { wx, wy } = s2w(e.offsetX, e.offsetY);
@@ -261,11 +279,13 @@ function onPointerUp(e) {
       const dx = t.x2 - t.x1, dy = t.y2 - t.y1;
       const len = Math.round(Math.sqrt(dx*dx + dy*dy));
       if (len > 5) {
+        const pxLen = Math.sqrt((t.x2-t.x1)**2+(t.y2-t.y1)**2);
+        const mLabel = OSM.scale > 0 ? `${(pxLen/OSM.scale).toFixed(1)}m` : `${len}px`;
         CANVAS.objects.push({
           id: uid(), type: 'line',
           x: t.x1, y: t.y1, x2: t.x2, y2: t.y2,
           color: CANVAS.drawColor, lineWidth: CANVAS.drawWidth,
-          label: `${len}px`, name: 'Măsurătoare',
+          label: mLabel, name: 'Măsurătoare',
         });
         saveHistory();
       }
@@ -355,6 +375,7 @@ function drawGrid(ctx, W, H) {
 }
 
 function drawObj(ctx, o) {
+  if (o.type === 'building_poly') { drawBuildingPoly(ctx, o); return; }
   if (o.type === 'road_poly') { drawRoadPoly(ctx, o); return; }
   if (o.type === 'roundabout') { drawRoundabout(ctx, o); return; }
   ctx.save();
@@ -1005,434 +1026,382 @@ function uid() { return Math.random().toString(36).slice(2,10)+Date.now().toStri
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 
-// ===== OSM SCHIȚĂ AUTOMATĂ =====
-// ===================================================================
-// OSM → SCHIȚĂ AUTOMATĂ — Modul ScetchACC v2.2
-// Interogare Overpass API → Conversie geometrie → Canvas
-// ===================================================================
+// ===== OSM SCHIȚĂ AUTOMATĂ v2.4 =====
+// Overpass API → Drumuri + Clădiri + Semafoare + Treceri + Indicatoare
 
-// ===== OSM SKETCH STATE =====
 const OSM = {
-  active: false,
-  bbox: null,       // { minLat, minLng, maxLat, maxLng }
-  scale: 3.0,       // pixeli per metru
-  originLat: 0,
-  originLng: 0,
-  canvasOffsetX: 400,
-  canvasOffsetY: 400,
-  selecting: false,
-  selectStart: null,
-  selectRect: null,
+  scale: 0,
+  originLat: 0, originLng: 0,
+  canvasOffsetX: 0, canvasOffsetY: 0,
 };
 
-// Conversie coordonate geografice → pixeli canvas
 function geo2px(lat, lng) {
   const R = 6371000;
   const dLat = (lat - OSM.originLat) * Math.PI / 180;
   const dLng = (lng - OSM.originLng) * Math.PI / 180;
   const avgLat = (lat + OSM.originLat) / 2 * Math.PI / 180;
   const x = dLng * R * Math.cos(avgLat) * OSM.scale;
-  const y = -dLat * R * OSM.scale; // y inversat (nord = sus)
+  const y = -dLat * R * OSM.scale;
   return { x: OSM.canvasOffsetX + x, y: OSM.canvasOffsetY + y };
 }
 
-// Distanță în metri între două puncte geo
-function geoDist(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const avgLat = (lat1 + lat2) / 2 * Math.PI / 180;
-  return Math.sqrt(Math.pow(dLat * R, 2) + Math.pow(dLng * R * Math.cos(avgLat), 2));
-}
-
-// Număr de benzi din taguri OSM
 function getLanes(tags) {
-  if (tags.lanes) return parseInt(tags.lanes) || 1;
+  if (tags.lanes) return Math.max(1, parseInt(tags.lanes) || 1);
   const hw = tags.highway || '';
   if (hw === 'motorway' || hw === 'trunk') return 2;
   if (hw === 'primary' || hw === 'secondary') return 2;
-  if (hw === 'tertiary' || hw === 'residential') return 1;
-  if (hw === 'service' || hw === 'footway' || hw === 'path') return 1;
   return 1;
 }
 
-// Lățime drum în metri bazată pe tip și benzi
-function getRoadWidth(tags) {
-  if (tags.width) return parseFloat(tags.width) || 6;
+function getRoadWidthM(tags) {
+  if (tags.width) return Math.max(2, parseFloat(tags.width) || 6);
   const hw = tags.highway || '';
   const lanes = getLanes(tags);
-  const laneWidth = 3.5; // metri per bandă
-  const baseWidths = {
-    motorway: 4.0, trunk: 3.75, primary: 3.5, secondary: 3.25,
-    tertiary: 3.0, residential: 3.0, service: 2.75,
-    footway: 2.0, path: 1.5, cycleway: 2.0,
-    pedestrian: 4.0, living_street: 3.5,
-  };
-  const lw = baseWidths[hw] || 3.0;
-  return lanes * lw;
+  const lw = { motorway:4.0,trunk:3.75,primary:3.5,secondary:3.25,
+               tertiary:3.0,residential:3.0,service:2.5,
+               footway:1.8,path:1.5,cycleway:2.0,pedestrian:4.0,living_street:3.5 };
+  return lanes * (lw[hw] || 3.0);
 }
 
-// Culoare drum bazată pe tip
-function getRoadColor(tags, isBackground) {
-  const hw = tags.highway || '';
-  if (isBackground) {
-    if (hw === 'motorway' || hw === 'trunk') return '#1a3a5c';
-    if (hw === 'primary') return '#1a3a2c';
-    if (hw === 'secondary') return '#2a3020';
-    if (hw === 'footway' || hw === 'path' || hw === 'cycleway') return '#2a1a0a';
-    return '#1a1a1a';
-  }
-  if (hw === 'motorway') return '#4488cc';
-  if (hw === 'trunk') return '#44aa66';
-  if (hw === 'primary') return '#aaaaaa';
-  if (hw === 'secondary') return '#999999';
-  if (hw === 'tertiary') return '#888888';
-  if (hw === 'footway' || hw === 'path') return '#cc8844';
-  if (hw === 'cycleway') return '#4488aa';
-  if (hw === 'pedestrian') return '#aaaa88';
-  return '#777777';
+function getRoadColors(hw) {
+  const bg = { motorway:'#0d2a4a',trunk:'#0d2a1a',primary:'#0d0d0d',
+               secondary:'#111',tertiary:'#111',residential:'#0d0d0d',
+               service:'#0a0a0a',footway:'#1a0a00',cycleway:'#001a22',default:'#0d0d0d' };
+  const fg = { motorway:'#4b9cd3',trunk:'#3a9a55',primary:'#aaa',
+               secondary:'#999',tertiary:'#888',residential:'#777',
+               service:'#666',footway:'#b8865a',cycleway:'#4488aa',
+               pedestrian:'#aaa87a',default:'#6e6e6e' };
+  return { bg: bg[hw]||bg.default, fg: fg[hw]||fg.default };
 }
 
-// ===== INTEROGARE OVERPASS =====
 async function queryOverpassForArea(lat, lng, radiusMeters) {
-  const deg = radiusMeters / 111000;
-  const bbox = `${lat-deg},${lng-deg*1.5},${lat+deg},${lng+deg*1.5}`;
-
-  const query = `[out:json][timeout:25];
+  const d = radiusMeters / 111000;
+  const bbox = `${lat-d},${lng-d*1.4},${lat+d},${lng+d*1.4}`;
+  const q = `[out:json][timeout:30];
 (
   way["highway"](${bbox});
   way["junction"="roundabout"](${bbox});
-  node["highway"="traffic_signals"](${bbox});
-  node["highway"="stop"](${bbox});
-  node["highway"="crossing"](${bbox});
-  node["highway"="give_way"](${bbox});
+  node["highway"~"traffic_signals|stop|crossing|give_way|mini_roundabout"](${bbox});
+  node["railway"="level_crossing"](${bbox});
   way["building"](${bbox});
+  node["amenity"~"bus_stop|taxi"](${bbox});
 );
-out body;
->;
-out skel qt;`;
-
-  toast('Se descarcă date OSM... (5-15 sec)', 'info');
-
-  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const r = await fetch(url, { headers: { 'User-Agent': 'ScetchACC/2.2' } });
-  if (!r.ok) throw new Error(`Overpass error: ${r.status}`);
-  return await r.json();
+out body;>;out skel qt;`;
+  const r = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`,
+    { headers: {'User-Agent':'ScetchACC/2.4'} });
+  if (!r.ok) throw new Error(`Overpass HTTP ${r.status}`);
+  return r.json();
 }
 
-// ===== PARSARE ȘI GENERARE SCHIȚĂ =====
 async function generateSketchFromOSM(lat, lng, radiusMeters) {
   try {
-    // Trec pe tab schiță ÎNAINTE de a genera (pentru canvas dimensions corecte)
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    // Trec pe schiță PRIMUL — ca canvas-ul să aibă dimensiuni corecte
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
     document.querySelector('[data-tab="sketch"]').classList.add('active');
     document.getElementById('tab-sketch').classList.add('active');
     resizeCanvas();
-    await new Promise(r => setTimeout(r, 100)); // wait for resize
+    await new Promise(r=>setTimeout(r,120));
 
+    toast('⏳ Se descarcă OSM... (5-15 sec)', 'info');
     const data = await queryOverpassForArea(lat, lng, radiusMeters);
 
     // Index noduri
     const nodes = {};
-    data.elements.filter(e => e.type === 'node').forEach(n => { nodes[n.id] = n; });
+    data.elements.filter(e=>e.type==='node').forEach(n=>{ nodes[n.id]=n; });
 
-    // Calculez scale optim
-    OSM.originLat = lat;
-    OSM.originLng = lng;
+    // Parametri conversie
+    OSM.originLat = lat; OSM.originLng = lng;
     OSM.canvasOffsetX = CANVAS.width / 2;
     OSM.canvasOffsetY = CANVAS.height / 2;
+    // Scale: pixeli per metru — adaptat la raza aleasă
+    OSM.scale = Math.max(1.2, Math.min(6.0, 300 / radiusMeters));
 
-    // Scale: cât de mari să fie drumurile
-    // La radius 100m → scale ~3px/m, la 200m → ~2px/m
-    OSM.scale = Math.max(1.5, Math.min(5.0, 250 / radiusMeters));
+    const newObjs = [];
 
-    const newObjects = [];
-    let zOrder = 0;
+    // ── A. CLĂDIRI ──
+    const buildings = data.elements.filter(e=>e.type==='way' && e.tags?.building);
+    for (const bld of buildings) {
+      if (!bld.nodes || bld.nodes.length < 3) continue;
+      const coords = bld.nodes.map(nid=>nodes[nid]).filter(Boolean);
+      if (coords.length < 3) continue;
+      const pts = coords.map(n=>geo2px(n.lat, n.lon));
+      const tags = bld.tags || {};
+      const name = tags['addr:street']
+        ? `${tags['addr:street']} ${tags['addr:housenumber']||''}`.trim()
+        : (tags.name || tags['addr:housenumber'] || '');
+      newObjs.push({
+        id: uid(), type: 'building_poly',
+        pts, osmGenerated: true,
+        name, tags,
+        color: '#2a3a4a', borderColor: '#3a5a7a',
+      });
+    }
 
-    // ── 1. DRUMURI ──
-    const ways = data.elements.filter(e => e.type === 'way' && e.tags?.highway);
-    // Sortare: mai întâi drumuri mici (fundal), apoi cele mari (suprapuse corect)
-    const hwOrder = ['footway','path','cycleway','service','residential','living_street',
-                     'tertiary','secondary','primary','trunk','motorway'];
-    ways.sort((a, b) => hwOrder.indexOf(a.tags.highway||'') - hwOrder.indexOf(b.tags.highway||''));
+    // ── B. DRUMURI (sortat: mici primul, mari deasupra) ──
+    const hwZ = ['footway','path','cycleway','service','residential','living_street',
+                 'tertiary','secondary','primary','trunk','motorway'];
+    const ways = data.elements.filter(e=>e.type==='way' && e.tags?.highway);
+    ways.sort((a,b)=>hwZ.indexOf(a.tags.highway||'')-hwZ.indexOf(b.tags.highway||''));
 
     for (const way of ways) {
       if (!way.nodes || way.nodes.length < 2) continue;
-      const coords = way.nodes.map(nid => nodes[nid]).filter(Boolean);
+      const coords = way.nodes.map(nid=>nodes[nid]).filter(Boolean);
       if (coords.length < 2) continue;
-
       const tags = way.tags || {};
-      const isRoundabout = tags.junction === 'roundabout';
-      const roadWidthM = getRoadWidth(tags);
-      const roadWidthPx = roadWidthM * OSM.scale;
-      const lanes = getLanes(tags);
-      const isOneway = tags.oneway === 'yes' || isRoundabout;
       const hw = tags.highway || '';
-
-      // Skip detalii foarte mici la radiusuri mari
-      if (radiusMeters > 150 && (hw === 'footway' || hw === 'path') && !isRoundabout) continue;
-
-      // Construiesc polyline cu punctele
-      const pts = coords.map(n => geo2px(n.lat, n.lon));
-
-      // Obiect drum — tip special 'road_poly'
-      newObjects.push({
-        id: uid(), type: 'road_poly',
-        pts, roadWidthPx, lanes, isOneway, isRoundabout,
-        hw, tags,
-        zOrder: zOrder++,
-        name: tags.name || tags['name:ro'] || hw,
-        color: getRoadColor(tags, false),
-        bgColor: getRoadColor(tags, true),
+      const isRb = tags.junction === 'roundabout';
+      // Skip micro-detalii la zone mari
+      if (radiusMeters > 200 && (hw==='footway'||hw==='path') && !isRb) continue;
+      const pts = coords.map(n=>geo2px(n.lat, n.lon));
+      const roadWpx = getRoadWidthM(tags) * OSM.scale;
+      const { bg, fg } = getRoadColors(hw);
+      newObjs.push({
+        id: uid(), type: 'road_poly', osmGenerated: true,
+        pts, roadWidthPx: roadWpx,
+        lanes: getLanes(tags), isOneway: tags.oneway==='yes'||isRb,
+        hw, tags, name: tags.name||tags['name:ro']||'',
+        color: fg, bgColor: bg,
       });
     }
 
-    // ── 2. SENS GIRATORIU SPECIAL ──
-    const roundabouts = ways.filter(w => w.tags?.junction === 'roundabout');
+    // ── C. SENS GIRATORIU ──
+    const roundabouts = ways.filter(w=>w.tags?.junction==='roundabout');
     for (const rb of roundabouts) {
       if (!rb.nodes || rb.nodes.length < 3) continue;
-      const coords = rb.nodes.map(nid => nodes[nid]).filter(Boolean);
+      const coords = rb.nodes.map(nid=>nodes[nid]).filter(Boolean);
       if (coords.length < 3) continue;
-      const pts = coords.map(n => geo2px(n.lat, n.lon));
-      // Centrul și raza
-      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-      const r = pts.reduce((s, p) => s + Math.hypot(p.x - cx, p.y - cy), 0) / pts.length;
+      const pts = coords.map(n=>geo2px(n.lat, n.lon));
+      const cx = pts.reduce((s,p)=>s+p.x,0)/pts.length;
+      const cy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+      const r  = pts.reduce((s,p)=>s+Math.hypot(p.x-cx,p.y-cy),0)/pts.length;
       const tags = rb.tags || {};
-      const lanes = getLanes(tags);
-
-      newObjects.push({
-        id: uid(), type: 'roundabout',
-        x: cx - r, y: cy - r, w: r * 2, h: r * 2,
-        cx, cy, r,
-        lanes,
-        tags,
-        zOrder: zOrder++,
-        name: tags.name || 'Sens giratoriu',
+      newObjs.push({
+        id: uid(), type: 'roundabout', osmGenerated: true,
+        x: cx-r, y: cy-r, w: r*2, h: r*2,
+        cx, cy, r, lanes: getLanes(tags), tags,
+        name: tags.name || '',
       });
     }
 
-    // ── 3. NODURI SPECIALE (semafoare, traversări, etc.) ──
-    const specialNodes = data.elements.filter(e => e.type === 'node' && e.tags);
+    // ── D. NODURI SPECIALE: semafoare, treceri, stop, mini-sens ──
+    const specialNodes = data.elements.filter(e=>e.type==='node' && e.tags);
     for (const node of specialNodes) {
       const tags = node.tags || {};
-      const hw = tags.highway;
-      if (!hw) continue;
+      const hw = tags.highway || tags.railway || '';
       const { x, y } = geo2px(node.lat, node.lon);
+      let emoji=null, name=null, w=26, h=26, type='osm-sign';
 
-      let emoji = null, name = null, w = 28, h = 28;
-      if (hw === 'traffic_signals') { emoji = '🚦'; name = 'Semafor'; w = 22; h = 48; }
-      else if (hw === 'stop') { emoji = '🛑'; name = 'STOP'; }
-      else if (hw === 'crossing') { emoji = '🚸'; name = 'Trecere pietoni'; }
-      else if (hw === 'give_way') { emoji = '⚠️'; name = 'Cedează trecerea'; }
+      if (hw==='traffic_signals')   { emoji='🚦'; name='Semafor'; w=20; h=44; type='sign-semaphore'; }
+      else if (hw==='crossing')     { emoji='🚸'; name='Trecere pietoni'; }
+      else if (hw==='stop')         { emoji='🛑'; name='STOP'; }
+      else if (hw==='give_way')     { emoji='⚠️'; name='Cedează trecerea'; }
+      else if (hw==='mini_roundabout'){ emoji='🔄'; name='Mini-sens giratoriu'; }
+      else if (hw==='level_crossing'){ emoji='🚂'; name='Trecere cale ferată'; }
+      else if (tags.amenity==='bus_stop') { emoji='🚌'; name='Stație autobuz'; }
+      else if (tags.amenity==='taxi')    { emoji='🚕'; name='Stație taxi'; }
 
       if (emoji) {
-        newObjects.push({
-          id: uid(), type: 'sign-semaphore',
-          x: x - w/2, y: y - h/2, w, h,
+        newObjs.push({
+          id: uid(), type,
+          x: x-w/2, y: y-h/2, w, h,
           rotation: 0, scale: 1,
           emoji, name, label: '', color: '#e74c3c', note: '', personLink: '',
+          osmGenerated: true,
         });
       }
     }
 
-    // ── 4. MARCHEZI CENTRUL (locul accidentului) ──
+    // ── E. CENTRUL / LOCUL ACCIDENTULUI ──
     const { x: cx0, y: cy0 } = geo2px(lat, lng);
-    newObjects.push({
+    newObjs.push({
       id: uid(), type: 'impact-mark',
-      x: cx0 - 16, y: cy0 - 16, w: 32, h: 32,
-      rotation: 0, scale: 1,
-      emoji: '💥', name: 'Punct impact', label: 'ACCIDENT', color: '#ff4444', note: '', personLink: '',
+      x: cx0-16, y: cy0-16, w: 32, h: 32,
+      rotation: 0, scale: 1.2,
+      emoji: '💥', name: 'Punct impact', label: 'ACCIDENT',
+      color: '#ff4444', note: '', personLink: '',
+      osmGenerated: true,
     });
 
-    // Adaug la canvas — șterg schița anterioară dacă există (marcate cu osmGenerated)
-    CANVAS.objects = CANVAS.objects.filter(o => !o.osmGenerated);
-    newObjects.forEach(o => { o.osmGenerated = true; });
-    CANVAS.objects = [...newObjects, ...CANVAS.objects];
+    // Înlocuiesc obiectele OSM anterioare
+    CANVAS.objects = CANVAS.objects.filter(o=>!o.osmGenerated);
+    CANVAS.objects = [...newObjs, ...CANVAS.objects];
 
-    // Resetez view
+    // Reset zoom la 100% centrat
     CANVAS.zoom = 1; CANVAS.panX = 0; CANVAS.panY = 0;
     document.getElementById('canvas-zoom-display').textContent = '100%';
 
     saveHistory();
     drawCanvas();
 
-    const nRoads = ways.length;
-    const nRb = roundabouts.length;
-    toast(`✅ Schiță generată: ${nRoads} drumuri${nRb ? ', ' + nRb + ' sens giratoriu' : ''}`, 'success');
-
-
+    const nR = ways.length, nB = buildings.length, nS = specialNodes.filter(n=>n.tags?.highway||n.tags?.railway||n.tags?.amenity).length;
+    toast(`✅ ${nR} drumuri · ${nB} clădiri · ${nS} semne  |  Pinch zoom + drag cu degetul`, 'success');
 
   } catch(err) {
-    console.error('OSM error:', err);
-    toast('Eroare descărcare OSM: ' + err.message, 'error');
+    console.error('OSM sketch error:', err);
+    toast('Eroare OSM: ' + err.message, 'error');
   }
 }
 
-// ===== DRAW ROAD_POLY & ROUNDABOUT =====
+// ── DRAW BUILDING_POLY ──
+function drawBuildingPoly(ctx, o) {
+  const { pts } = o;
+  if (!pts || pts.length < 3) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i=1; i<pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.fillStyle = o.color || '#2a3a4a';
+  ctx.fill();
+  ctx.strokeStyle = o.borderColor || '#4a7a9a';
+  ctx.lineWidth = Math.max(0.5, 1/CANVAS.zoom);
+  ctx.stroke();
+  // Număr stradal / nume
+  if (o.name) {
+    const cx = pts.reduce((s,p)=>s+p.x,0)/pts.length;
+    const cy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+    const fs = Math.max(4, Math.min(11, 9/CANVAS.zoom));
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(180,220,255,0.9)';
+    ctx.fillText(o.name, cx, cy);
+  }
+  ctx.restore();
+}
+
+// ── DRAW ROAD_POLY ──
 function drawRoadPoly(ctx, o) {
-  const { pts, roadWidthPx, lanes, isOneway, hw } = o;
+  const { pts, roadWidthPx, lanes, isOneway } = o;
   if (!pts || pts.length < 2) return;
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-
-  // Fundal (trotuar/bordură)
-  ctx.strokeStyle = o.bgColor || '#1a1a1a';
-  ctx.lineWidth = roadWidthPx + 4 / CANVAS.zoom;
+  // Bordură / trotuar
+  ctx.strokeStyle = o.bgColor || '#111';
+  ctx.lineWidth = roadWidthPx + Math.max(3, 4/CANVAS.zoom);
   ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
-
   // Carosabil
   ctx.strokeStyle = o.color || '#777';
   ctx.lineWidth = roadWidthPx;
   ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
-
-  // Marcaj centru (linie despărțitoare)
+  // Linie axă (dacă dublu sens)
   if (lanes >= 2 && !isOneway) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-    ctx.lineWidth = Math.max(0.5, 1 / CANVAS.zoom);
-    ctx.setLineDash([8 / CANVAS.zoom, 6 / CANVAS.zoom]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = Math.max(0.4, 0.8/CANVAS.zoom);
+    ctx.setLineDash([7/CANVAS.zoom,6/CANVAS.zoom]);
     ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke(); ctx.setLineDash([]);
   }
-
-  // Linii de bandă (dacă >2 benzi)
+  // Linii benzi suplimentare
   if (lanes > 2) {
-    for (let li = 1; li < lanes; li++) {
-      const offset = ((li / lanes) - 0.5) * roadWidthPx;
-      drawOffsetLine(ctx, pts, offset, 'rgba(255,255,255,0.25)',
-        Math.max(0.5, 0.8/CANVAS.zoom), [5/CANVAS.zoom,8/CANVAS.zoom]);
+    const lw = roadWidthPx / lanes;
+    for (let li=1; li<lanes; li++) {
+      const off = (li/lanes - 0.5) * roadWidthPx;
+      _drawOffsetPolyline(ctx, pts, off, 'rgba(255,255,255,0.2)',
+        Math.max(0.3,0.5/CANVAS.zoom), [4/CANVAS.zoom,8/CANVAS.zoom]);
     }
   }
-
-  // Denumire stradă (la mijlocul segmentului)
-  if (o.name && roadWidthPx > 8) {
-    const mid = Math.floor(pts.length / 2);
-    const mx = (pts[mid-1].x + pts[mid].x) / 2;
-    const my = (pts[mid-1].y + pts[mid].y) / 2;
-    const angle = Math.atan2(pts[mid].y - pts[mid-1].y, pts[mid].x - pts[mid-1].x);
-    ctx.save();
-    ctx.translate(mx, my);
-    ctx.rotate(angle);
-    ctx.font = `${Math.max(4, roadWidthPx * 0.35)}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText(o.name, 0, 0);
-    ctx.restore();
-  }
-
-  ctx.restore();
-}
-
-function drawOffsetLine(ctx, pts, offset, color, width, dash) {
-  if (pts.length < 2) return;
-  ctx.save();
-  ctx.strokeStyle = color; ctx.lineWidth = width;
-  if (dash) ctx.setLineDash(dash);
-  ctx.beginPath();
-  for (let i = 0; i < pts.length; i++) {
-    let nx = 0, ny = 0;
-    if (i < pts.length - 1) {
-      const dx = pts[i+1].x - pts[i].x, dy = pts[i+1].y - pts[i].y;
-      const len = Math.hypot(dx, dy) || 1;
-      nx = -dy / len; ny = dx / len;
-    } else {
-      const dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
-      const len = Math.hypot(dx, dy) || 1;
-      nx = -dy / len; ny = dx / len;
-    }
-    const ox = pts[i].x + nx * offset, oy = pts[i].y + ny * offset;
-    if (i === 0) ctx.moveTo(ox, oy); else ctx.lineTo(ox, oy);
-  }
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
-}
-
-function drawRoundabout(ctx, o) {
-  const { cx, cy, r, lanes } = o;
-  ctx.save();
-  ctx.lineCap = 'round';
-
-  const laneW = Math.max(3, r * 0.25);
-
-  // Fundal insula centrală
-  ctx.beginPath(); ctx.arc(cx, cy, r - laneW * lanes, 0, Math.PI * 2);
-  ctx.fillStyle = '#1a2a1a'; ctx.fill();
-
-  // Benzi
-  for (let li = 0; li < lanes; li++) {
-    const inner = r - laneW * (li + 1);
-    const outer = r - laneW * li;
-    const mid = (inner + outer) / 2;
-
-    // Carosabil
-    ctx.beginPath(); ctx.arc(cx, cy, mid, 0, Math.PI * 2);
-    ctx.strokeStyle = '#777'; ctx.lineWidth = laneW - 1;
-    ctx.stroke();
-
-    // Bordură
-    ctx.beginPath(); ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.5 / CANVAS.zoom;
-    ctx.stroke();
-  }
-
-  // Marcaj linie bandă
-  if (lanes > 1) {
-    for (let li = 1; li < lanes; li++) {
-      const rr = r - laneW * li;
-      ctx.beginPath(); ctx.arc(cx, cy, rr, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-      ctx.lineWidth = Math.max(0.5, 0.8 / CANVAS.zoom);
-      ctx.setLineDash([5/CANVAS.zoom, 8/CANVAS.zoom]);
-      ctx.stroke(); ctx.setLineDash([]);
-    }
-  }
-
-  // Săgeți sens giratoriu (4 puncte cardinale)
-  const arrowR = r - laneW * 0.5;
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
-    const ax = cx + arrowR * Math.cos(a);
-    const ay = cy + arrowR * Math.sin(a);
-    // Direcție tangenţială (sensul acelor de ceasornic)
-    const dir = a + Math.PI / 2;
-    const aLen = Math.max(3, laneW * 0.4);
-    ctx.save();
-    ctx.translate(ax, ay); ctx.rotate(dir);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  // Săgeată sens unic
+  if (isOneway && pts.length >= 2 && roadWidthPx > 4) {
+    const mid = Math.floor(pts.length/2);
+    const p1 = pts[mid-1], p2 = pts[mid];
+    const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+    const angle=Math.atan2(p2.y-p1.y,p2.x-p1.x);
+    const as=Math.max(4,roadWidthPx*0.4);
+    ctx.save(); ctx.translate(mx,my); ctx.rotate(angle);
+    ctx.fillStyle='rgba(255,255,255,0.55)';
     ctx.beginPath();
-    ctx.moveTo(0, -aLen); ctx.lineTo(aLen * 0.4, aLen * 0.3); ctx.lineTo(-aLen * 0.4, aLen * 0.3);
+    ctx.moveTo(as,0); ctx.lineTo(-as*0.6,as*0.5); ctx.lineTo(-as*0.6,-as*0.5);
     ctx.closePath(); ctx.fill();
     ctx.restore();
   }
-
-  // Etichetă
-  if (o.name && o.name !== 'Sens giratoriu') {
-    ctx.font = `${Math.max(5, r * 0.15)}px sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255,255,0,0.7)';
-    ctx.fillText(o.name, cx, cy);
+  // Denumire stradă
+  if (o.name && roadWidthPx > 6) {
+    const mid = Math.floor(pts.length/2);
+    const p1=pts[Math.max(0,mid-1)], p2=pts[mid];
+    const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+    const angle=Math.atan2(p2.y-p1.y,p2.x-p1.x);
+    ctx.save(); ctx.translate(mx,my); ctx.rotate(angle);
+    const fs=Math.max(4,Math.min(13,roadWidthPx*0.32));
+    ctx.font=`${fs}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.fillText(o.name,0,0);
+    ctx.restore();
   }
-
   ctx.restore();
 }
 
-// ===== BUTON "GENEREAZĂ SCHIȚĂ DIN HARTĂ" =====
-function initOSMSketch() {
-  // Adaug buton în bara de hartă
-  const btn = document.createElement('button');
-  btn.className = 'map-action-btn osm-sketch-btn';
-  btn.id = 'btn-osm-sketch';
-  btn.innerHTML = `🗺️ Generează Schiță`;
-  btn.style.cssText = 'background:var(--accent);color:var(--bg-0);font-weight:700;border-color:transparent;';
+function _drawOffsetPolyline(ctx, pts, offset, color, width, dash) {
+  if (pts.length<2) return;
+  ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=width;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath();
+  for (let i=0;i<pts.length;i++) {
+    let nx=0,ny=0;
+    if (i<pts.length-1) { const dx=pts[i+1].x-pts[i].x,dy=pts[i+1].y-pts[i].y,l=Math.hypot(dx,dy)||1; nx=-dy/l; ny=dx/l; }
+    else { const dx=pts[i].x-pts[i-1].x,dy=pts[i].y-pts[i-1].y,l=Math.hypot(dx,dy)||1; nx=-dy/l; ny=dx/l; }
+    const ox=pts[i].x+nx*offset, oy=pts[i].y+ny*offset;
+    if (i===0) ctx.moveTo(ox,oy); else ctx.lineTo(ox,oy);
+  }
+  ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+}
 
-  // Adaug selectorul de rază
+// ── DRAW ROUNDABOUT ──
+function drawRoundabout(ctx, o) {
+  const { cx, cy, r, lanes } = o;
+  if (!r || r < 2) return;
+  ctx.save();
+  const lw = Math.max(3, r * 0.28 / Math.max(1,lanes));
+  // Insula centrală verde
+  ctx.beginPath(); ctx.arc(cx,cy,r-lw*lanes-1,0,Math.PI*2);
+  ctx.fillStyle='#1a2a1a'; ctx.fill();
+  ctx.strokeStyle='#2a4a2a'; ctx.lineWidth=Math.max(0.5,1/CANVAS.zoom); ctx.stroke();
+  // Benzi
+  for (let li=0;li<lanes;li++) {
+    const outer=r-lw*li, mid=r-lw*(li+0.5);
+    ctx.beginPath(); ctx.arc(cx,cy,mid,0,Math.PI*2);
+    ctx.strokeStyle='#7a7a7a'; ctx.lineWidth=lw-0.5; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,outer,0,Math.PI*2);
+    ctx.strokeStyle='#111'; ctx.lineWidth=Math.max(0.5,1.5/CANVAS.zoom); ctx.stroke();
+  }
+  // Marcaj despărțire benzi
+  for (let li=1;li<lanes;li++) {
+    ctx.beginPath(); ctx.arc(cx,cy,r-lw*li,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,0.38)';
+    ctx.lineWidth=Math.max(0.3,0.6/CANVAS.zoom);
+    ctx.setLineDash([5/CANVAS.zoom,8/CANVAS.zoom]);
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  // Săgeți sens giratoriu la 4 puncte cardinale
+  const ar=r-lw*0.5;
+  [0,Math.PI/2,Math.PI,Math.PI*1.5].forEach(a=>{
+    const ax=cx+ar*Math.cos(a), ay=cy+ar*Math.sin(a);
+    const dir=a+Math.PI/2;
+    const al=Math.max(3,lw*0.45);
+    ctx.save(); ctx.translate(ax,ay); ctx.rotate(dir);
+    ctx.fillStyle='rgba(255,255,255,0.6)';
+    ctx.beginPath(); ctx.moveTo(0,-al); ctx.lineTo(al*0.45,al*0.35); ctx.lineTo(-al*0.45,al*0.35);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  });
+  // Etichetă
+  if (o.name) {
+    ctx.font=`${Math.max(5,r*0.14)}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(255,220,50,0.75)'; ctx.fillText(o.name,cx,cy);
+  }
+  ctx.restore();
+}
+
+// ── INIT OSM SKETCH BUTTON ──
+function initOSMSketch() {
+  const section = document.querySelector('.map-type-section');
+  if (!section || document.getElementById('btn-osm-sketch')) return;
+
+  // Selector rază
   const radiusSelect = document.createElement('select');
   radiusSelect.id = 'osm-radius-select';
   radiusSelect.innerHTML = `
@@ -1440,39 +1409,40 @@ function initOSMSketch() {
     <option value="120" selected>120m — Zonă tipică</option>
     <option value="200">200m — Zonă largă</option>
     <option value="350">350m — Sector mare</option>
+    <option value="500">500m — Sector extins</option>
   `;
-  radiusSelect.style.cssText = 'background:var(--bg-2);border:1px solid var(--border2);color:var(--text-1);font-size:12px;padding:5px 8px;border-radius:6px;outline:none;';
+  radiusSelect.style.cssText = 'background:var(--bg-2);border:1px solid var(--border2);color:var(--text-1);font-size:12px;padding:5px 8px;border-radius:6px;outline:none;cursor:pointer;';
 
-  const section = document.querySelector('.map-type-section');
-  if (section) {
-    section.appendChild(radiusSelect);
-    section.appendChild(btn);
-  }
+  // Buton generare
+  const btn = document.createElement('button');
+  btn.className = 'map-action-btn';
+  btn.id = 'btn-osm-sketch';
+  btn.textContent = '🗺️ Generează Schiță';
+  btn.style.cssText = 'background:var(--accent);color:var(--bg-0);font-weight:700;border-color:transparent;white-space:nowrap;';
+
+  section.appendChild(radiusSelect);
+  section.appendChild(btn);
 
   btn.addEventListener('click', async () => {
-    // Folosim locația selectată SAU centrul hărții curente
+    // Folosim locația setată SAU centrul curent al hărții
     let lat = APP.location.lat;
     let lng = APP.location.lng;
     if (!lat && APP.leafletMap) {
       const c = APP.leafletMap.getCenter();
       lat = c.lat; lng = c.lng;
     }
-    if (!lat) {
-      toast('Caută o adresă sau activează GPS mai întâi!', 'error'); return;
-    }
-    const radius = parseInt(document.getElementById('osm-radius-select').value) || 120;
-    btn.disabled = true;
-    btn.style.opacity = '0.6';
-    btn.textContent = '⏳ Se descarcă OSM...';
+    if (!lat) { toast('Caută o adresă sau activează GPS mai întâi!', 'error'); return; }
+
+    btn.disabled = true; btn.style.opacity = '0.6';
+    btn.textContent = '⏳ Se descarcă...';
     try {
+      const radius = parseInt(document.getElementById('osm-radius-select').value) || 120;
       await generateSketchFromOSM(lat, lng, radius);
-    } catch(err) {
-      toast('Eroare: ' + err.message, 'error');
+    } catch(e) {
+      toast('Eroare: ' + e.message, 'error');
     } finally {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.innerHTML = `🗺️ Generează Schiță`;
+      btn.disabled = false; btn.style.opacity = '1';
+      btn.textContent = '🗺️ Generează Schiță';
     }
   });
 }
-
