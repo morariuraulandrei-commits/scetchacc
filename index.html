@@ -6,4 +6,360 @@
 <title>ScetchACC — Schiță Accident Rutier</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0a1628">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"><link rel="stylesheet" href="style.css"></head><body><div id="splash"><div class="splash-content"><div class="splash-logo">⚠</div><div class="splash-title">ScetchACC</div><div class="splash-sub">Sistem Schițȃ Accident Rutier</div><div class="splash-bar"><div class="splash-fill"></div></div><div class="splash-version">v2.1 † Biroul Rutier Arad · OpenStreetMap</div></div></div><script src="app.js"></script></body></html>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="splash">
+  <div class="splash-content">
+    <div class="splash-logo">⚠</div>
+    <div class="splash-title">ScetchACC</div>
+    <div class="splash-sub">Sistem de Schiță Accident Rutier</div>
+    <div class="splash-bar"><div class="splash-fill"></div></div>
+    <div class="splash-version">v2.1 · Biroul Rutier Arad · OpenStreetMap</div>
+  </div>
+</div>
+
+<header id="main-header">
+  <div class="header-left">
+    <div class="logo-mark">⚠</div>
+    <div class="header-title">
+      <span class="title-main">ScetchACC</span>
+      <span class="title-sub">Schiță Accident Rutier</span>
+    </div>
+  </div>
+  <div class="header-center">
+    <div class="incident-id">
+      <span class="id-label">DOSAR</span>
+      <span class="id-val" id="incident-id-display">--</span>
+    </div>
+    <div class="incident-time" id="incident-time">--:-- | --.--.----</div>
+  </div>
+  <div class="header-right">
+    <button class="hbtn" id="btn-save-pdf">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <span>PDF</span>
+    </button>
+    <button class="hbtn" id="btn-new">
+      <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <span>Nou</span>
+    </button>
+  </div>
+</header>
+
+<nav id="tab-nav">
+  <button class="tab-btn active" data-tab="sketch">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg><span>Schiță</span>
+  </button>
+  <button class="tab-btn" data-tab="map">
+    <svg viewBox="0 0 24 24"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg><span>Hartă</span>
+  </button>
+  <button class="tab-btn" data-tab="persons">
+    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Persoane</span>
+  </button>
+  <button class="tab-btn" data-tab="tests">
+    <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11"/><path d="M5 9H3m18 0h-2M9 14h6"/><path d="M5 19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5H5v5z"/></svg><span>Teste</span>
+  </button>
+  <button class="tab-btn" data-tab="notes">
+    <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Notițe</span>
+  </button>
+</nav>
+
+<main id="main-content">
+
+  <!-- SCHIȚĂ -->
+  <div class="tab-panel active" id="tab-sketch">
+    <div class="sketch-layout">
+      <aside class="sketch-toolbar">
+        <div class="toolbar-section">
+          <div class="ts-label">Instrumente</div>
+          <button class="tool-btn active" data-tool="select"><svg viewBox="0 0 24 24"><path d="M5 3l14 9-7 1-3 7z"/></svg><span>Select</span></button>
+          <button class="tool-btn" data-tool="line"><svg viewBox="0 0 24 24"><line x1="3" y1="21" x2="21" y2="3"/><line x1="3" y1="21" x2="7" y2="21"/><line x1="3" y1="21" x2="3" y2="17"/><line x1="21" y1="3" x2="17" y2="3"/><line x1="21" y1="3" x2="21" y2="7"/></svg><span>Măsură</span></button>
+          <button class="tool-btn" data-tool="text"><svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg><span>Text</span></button>
+          <button class="tool-btn" data-tool="eraser"><svg viewBox="0 0 24 24"><path d="M20 20H7L3 16l11-11 7 7-1 8z"/><line x1="6" y1="20" x2="14" y2="12"/></svg><span>Șterge</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Vehicule</div>
+          <button class="tool-btn" data-tool="spawn" data-item="car"><span class="emoji-icon">🚗</span><span>Autoturism</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="truck"><span class="emoji-icon">🚛</span><span>Camion</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="moto"><span class="emoji-icon">🏍️</span><span>Moto</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="tram"><span class="emoji-icon">🚋</span><span>Tramvai</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="bus"><span class="emoji-icon">🚌</span><span>Autobuz</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="bike"><span class="emoji-icon">🚲</span><span>Bicicletă</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="van"><span class="emoji-icon">🚐</span><span>Microbuz</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="ambulance"><span class="emoji-icon">🚑</span><span>Ambulanță</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Participanți</div>
+          <button class="tool-btn" data-tool="spawn" data-item="pedestrian"><span class="emoji-icon">🚶</span><span>Pieton</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="animal"><span class="emoji-icon">🐄</span><span>Animal</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Indicatoare</div>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-stop"><span class="emoji-icon">🛑</span><span>STOP</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-priority"><span class="emoji-icon">🔶</span><span>Prioritate</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-yield"><span class="emoji-icon">⚠️</span><span>Cedează</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-semaphore"><span class="emoji-icon">🚦</span><span>Semafor</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-crossing"><span class="emoji-icon">🚸</span><span>Trecere</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="sign-noentry"><span class="emoji-icon">⛔</span><span>Interzis</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Marcaje</div>
+          <button class="tool-btn" data-tool="spawn" data-item="impact-mark"><span class="emoji-icon">💥</span><span>Impact</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="skid-mark"><span class="emoji-icon">〰️</span><span>Frânare</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="debris"><span class="emoji-icon">💢</span><span>Resturi</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="north-arrow"><span class="emoji-icon">🧭</span><span>Nord</span></button>
+          <button class="tool-btn" data-tool="spawn" data-item="cone"><span class="emoji-icon">🔺</span><span>Con</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Canvas</div>
+          <button class="tool-btn small" id="btn-undo"><svg viewBox="0 0 24 24"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg><span>Undo</span></button>
+          <button class="tool-btn small" id="btn-redo"><svg viewBox="0 0 24 24"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 0 4-4h12"/></svg><span>Redo</span></button>
+          <button class="tool-btn small" id="btn-clear-canvas"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/></svg><span>Reset</span></button>
+          <button class="tool-btn small" id="btn-export-img"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Img</span></button>
+        </div>
+        <div class="toolbar-section">
+          <div class="ts-label">Stiluri</div>
+          <div class="style-row"><label>Culoare</label><input type="color" id="draw-color" value="#e74c3c"></div>
+          <div class="style-row"><label>Grosime</label><input type="range" id="draw-width" min="1" max="20" value="3"></div>
+          <div class="style-row"><label>Grilă</label><button id="canvas-grid-toggle" class="small-btn" style="flex:1">ON</button></div>
+          <div class="style-row"><label>Fundal</label><button id="canvas-bg-toggle" class="small-btn" style="flex:1">Asfalt</button></div>
+          <div class="style-row"><label>Zoom</label><button id="canvas-zoom-fit" class="small-btn" style="flex:1">Fit</button></div>
+        </div>
+      </aside>
+
+      <div class="canvas-container" id="canvas-container">
+        <div class="canvas-info-bar">
+          <span id="canvas-zoom-display">100%</span>
+          <span id="canvas-cursor-pos">X:0 Y:0</span>
+          <span id="canvas-selected-info" style="color:var(--accent)">-</span>
+        </div>
+        <canvas id="sketch-canvas"></canvas>
+        <div id="label-editor" class="label-editor hidden">
+          <input type="text" id="label-input" placeholder="Etichetă...">
+          <button id="label-ok">✓</button>
+          <button id="label-cancel">✗</button>
+        </div>
+      </div>
+
+      <aside class="props-panel">
+        <div class="props-title">Proprietăți Obiect</div>
+        <div id="props-empty" class="props-empty">
+          <div class="props-empty-icon">◎</div>
+          <p>Selectați un obiect pentru editare</p>
+        </div>
+        <div id="props-form" class="hidden">
+          <div class="prop-group"><label>Tip</label><span id="prop-type-display" style="font-size:12px;color:var(--accent)">—</span></div>
+          <div class="prop-group"><label>Etichetă / Nr. înmatriculare</label><input type="text" id="prop-label" placeholder="ex: B 123 ABC"></div>
+          <div class="prop-group"><label>Rotație (grade)</label><input type="number" id="prop-rotation" min="0" max="360" value="0"></div>
+          <div class="prop-group"><label>Dimensiune <span id="prop-scale-val">100%</span></label><input type="range" id="prop-scale" min="30" max="400" value="100"></div>
+          <div class="prop-group"><label>Culoare highlight</label><input type="color" id="prop-color" value="#e74c3c"></div>
+          <div class="prop-group"><label>Notă obiect</label><textarea id="prop-note" rows="3" placeholder="Notă specifică..."></textarea></div>
+          <div class="prop-group"><label>Legătură persoană</label><select id="prop-person-link"><option value="">— nelegat —</option></select></div>
+          <div class="prop-actions">
+            <button class="pab pab-apply" id="btn-prop-apply">Aplică</button>
+            <button class="pab pab-delete" id="btn-prop-delete">Șterge</button>
+          </div>
+        </div>
+        <div class="measurements-box">
+          <div class="mb-title">📐 Măsurători</div>
+          <div id="measurements-list" class="measurements-list"><div class="measure-empty">Nicio măsurătoare</div></div>
+          <button class="add-measure-btn" id="btn-add-measure">+ Adaugă măsurătoare</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- HARTĂ — Leaflet + OpenStreetMap, ZERO configurare -->
+  <div class="tab-panel" id="tab-map">
+    <div class="map-layout">
+      <div class="map-controls-bar">
+        <div class="map-loc-section">
+          <div class="map-search-group">
+            <input type="text" id="map-search-input" placeholder="Caută adresă sau localitate în România...">
+            <button id="btn-map-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+          </div>
+          <button class="map-action-btn" id="btn-gps-locate">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/><circle cx="12" cy="12" r="10"/></svg> GPS Live
+          </button>
+          <button class="map-action-btn" id="btn-gps-stop" style="display:none">
+            <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg> Stop GPS
+          </button>
+          <div id="gps-status" class="gps-status">GPS oprit</div>
+        </div>
+        <div class="map-info-section">
+          <div class="map-info-item"><span class="mil">📍 Adresă</span><span id="map-address-display" class="miv">—</span></div>
+          <div class="map-info-item"><span class="mil">🌐 Coordonate</span><span id="map-coords-display" class="miv">—</span></div>
+          <div class="map-info-item"><span class="mil">🎯 Precizie GPS</span><span id="map-accuracy-display" class="miv">—</span></div>
+        </div>
+        <div class="map-type-section">
+          <label>Tip hartă:</label>
+          <select id="map-type-select">
+            <option value="osm">OpenStreetMap (stradal)</option>
+            <option value="sat" selected>Satelit (ESRI)</option>
+            <option value="dark">Dark (CartoDB)</option>
+            <option value="topo">Topografic</option>
+          </select>
+          <button class="map-action-btn" id="btn-map-save-location">💾 Salvează locație</button>
+          <button class="map-action-btn" id="btn-copy-coords">📋 Copiază coord.</button>
+        </div>
+      </div>
+      <div id="leaflet-map"></div>
+    </div>
+  </div>
+
+  <!-- PERSOANE -->
+  <div class="tab-panel" id="tab-persons">
+    <div class="persons-layout">
+      <div class="persons-header"><h2>Persoane Implicate</h2><button class="add-btn" id="btn-add-person">+ Adaugă Persoană</button></div>
+      <div id="persons-list" class="persons-list"><div class="persons-empty"><div class="pe-icon">👥</div><p>Nicio persoană adăugată</p><p class="pe-sub">Apăsați butonul „Adaugă Persoană" pentru a înregistra participanții la accident</p></div></div>
+    </div>
+  </div>
+
+  <!-- TESTE -->
+  <div class="tab-panel" id="tab-tests">
+    <div class="tests-layout">
+      <div class="tests-header"><h2>Teste Efectuate</h2><button class="add-btn" id="btn-add-test">+ Adaugă Test</button></div>
+      <div id="tests-list" class="tests-list"><div class="tests-empty"><div class="te-icon">🧪</div><p>Niciun test înregistrat</p></div></div>
+    </div>
+  </div>
+
+  <!-- NOTIȚE -->
+  <div class="tab-panel" id="tab-notes">
+    <div class="notes-layout">
+      <div class="notes-left">
+        <div class="notes-section">
+          <h3>📋 Date Dosar</h3>
+          <div class="form-grid">
+            <div class="form-group"><label>Nr. Dosar / Raport</label><input type="text" id="note-dosar" placeholder="ex: 1234/2024"></div>
+            <div class="form-group"><label>Data Accidentului</label><input type="date" id="note-date"></div>
+            <div class="form-group"><label>Ora Accidentului</label><input type="time" id="note-time"></div>
+            <div class="form-group"><label>Lucrător Rutier</label><input type="text" id="note-officer" placeholder="Grad. Prenume Nume"></div>
+            <div class="form-group full"><label>Locul Accidentului</label><input type="text" id="note-location" placeholder="Strada, număr, localitate, județ"></div>
+            <div class="form-group"><label>Condiții Meteo</label><select id="note-weather"><option>Senin</option><option>Noros</option><option>Ploaie</option><option>Ninsoare</option><option>Ceață</option><option>Vânt puternic</option><option>Polei / Gheață</option></select></div>
+            <div class="form-group"><label>Vizibilitate</label><select id="note-visibility"><option>Bună</option><option>Redusă</option><option>Foarte slabă</option></select></div>
+            <div class="form-group"><label>Stare carosabil</label><select id="note-road-cond"><option>Uscat</option><option>Umed</option><option>Alunecos</option><option>Cu gheață</option><option>Cu zăpadă</option></select></div>
+            <div class="form-group"><label>Iluminat stradal</label><select id="note-lighting"><option>Da — funcțional</option><option>Da — nefuncțional</option><option>Nu există</option><option>Zi</option></select></div>
+          </div>
+        </div>
+        <div class="notes-section">
+          <h3>🔴 Tipul Accidentului</h3>
+          <div class="accident-types">
+            <label class="at-check"><input type="checkbox" id="at-coliziune"> Coliziune frontală</label>
+            <label class="at-check"><input type="checkbox" id="at-coliziune-spate"> Coliziune spate</label>
+            <label class="at-check"><input type="checkbox" id="at-lateral"> Impact lateral</label>
+            <label class="at-check"><input type="checkbox" id="at-pieton"> Lovire pieton</label>
+            <label class="at-check"><input type="checkbox" id="at-animal"> Lovire animal</label>
+            <label class="at-check"><input type="checkbox" id="at-rasturnat"> Răsturnare</label>
+            <label class="at-check"><input type="checkbox" id="at-iesire"> Ieșire din carosabil</label>
+            <label class="at-check"><input type="checkbox" id="at-tren"> Impact cu tren/tramvai</label>
+            <label class="at-check"><input type="checkbox" id="at-bicicleta"> Coliziune biciclist</label>
+            <label class="at-check"><input type="checkbox" id="at-alta"> Alt tip: <input type="text" id="at-alta-text" placeholder="specificați..."></label>
+          </div>
+        </div>
+        <div class="notes-section">
+          <h3>📝 Descriere Eveniment</h3>
+          <textarea id="note-description" rows="6" class="full-textarea" placeholder="Descrieți în detaliu circumstanțele producerii accidentului, modul de desfășurare, cauzele probabile, martorii prezenți..."></textarea>
+        </div>
+        <div class="notes-section">
+          <h3>🚑 Victime / Vătămări corporale</h3>
+          <div class="form-grid">
+            <div class="form-group"><label>Persoane decedate</label><input type="number" id="note-dead" value="0" min="0"></div>
+            <div class="form-group"><label>Răniți grav</label><input type="number" id="note-injured-heavy" value="0" min="0"></div>
+            <div class="form-group"><label>Răniți ușor</label><input type="number" id="note-injured-light" value="0" min="0"></div>
+            <div class="form-group"><label>Servicii de urgență</label><div class="checkbox-row"><label><input type="checkbox" id="svc-ambulanta"> Ambulanță</label><label><input type="checkbox" id="svc-pompieri"> Pompieri</label><label><input type="checkbox" id="svc-smurd"> SMURD</label><label><input type="checkbox" id="svc-politie"> Poliție suport</label></div></div>
+          </div>
+        </div>
+        <div class="notes-section">
+          <h3>💬 Observații finale</h3>
+          <textarea id="note-final" rows="4" class="full-textarea" placeholder="Alte mențiuni, observații, constatări..."></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- MODAL PERSON -->
+<div class="modal-overlay" id="modal-person">
+  <div class="modal">
+    <div class="modal-header"><h3 id="modal-person-title">Adaugă Persoană</h3><button class="modal-close" data-close="modal-person">✕</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label>Rol în accident</label><select id="person-role"><option value="conducator">Conducător auto</option><option value="pasager">Pasager</option><option value="pieton">Pieton</option><option value="biciclist">Biciclist</option><option value="martor">Martor</option><option value="alt">Alt rol</option></select></div>
+        <div class="form-group"><label>Vehicul (dacă aplicabil)</label><input type="text" id="person-vehicle" placeholder="ex: Autoturism 1 — B 123 ABC"></div>
+        <div class="form-group"><label>Nume</label><input type="text" id="person-name" placeholder="Prenume Nume"></div>
+        <div class="form-group"><label>CNP</label><input type="text" id="person-cnp" placeholder="1234567890123" maxlength="13"></div>
+        <div class="form-group"><label>Data nașterii</label><input type="date" id="person-dob"></div>
+        <div class="form-group"><label>Adresă domiciliu</label><input type="text" id="person-address" placeholder="Str., nr., localitate"></div>
+        <div class="form-group"><label>Telefon</label><input type="tel" id="person-phone" placeholder="+40..."></div>
+        <div class="form-group"><label>Permis (serie, categorie)</label><input type="text" id="person-license" placeholder="ex: XY123456 — B"></div>
+        <div class="form-group"><label>Permis valabil până</label><input type="date" id="person-license-exp"></div>
+        <div class="form-group"><label>Nr. Înmatriculare vehicul</label><input type="text" id="person-plate" placeholder="B 123 ABC"></div>
+        <div class="form-group"><label>Asigurare RCA (seria)</label><input type="text" id="person-insurance" placeholder="Seria poliței RCA"></div>
+        <div class="form-group"><label>Asigurare valabilă până</label><input type="date" id="person-insurance-exp"></div>
+        <div class="form-group full"><label>Leziuni / vătămări corporale</label><textarea id="person-injuries" rows="2" placeholder="Descrieți leziunile constatate..."></textarea></div>
+        <div class="form-group full"><label>Observații</label><textarea id="person-notes" rows="2" placeholder="Alte observații..."></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="modal-btn-cancel" data-close="modal-person">Anulează</button><button class="modal-btn-ok" id="btn-person-save">Salvează Persoana</button></div>
+  </div>
+</div>
+
+<!-- MODAL TEST -->
+<div class="modal-overlay" id="modal-test">
+  <div class="modal">
+    <div class="modal-header"><h3>Adaugă Test Efectuat</h3><button class="modal-close" data-close="modal-test">✕</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group"><label>Tip test</label><select id="test-type"><option value="etilotest">Etilotest (alcooltest)</option><option value="drugtest">Drugtest</option><option value="alcoolemie">Recoltare alcoolemie (sânge)</option><option value="alt">Alt test</option></select></div>
+        <div class="form-group"><label>Persoana testată</label><select id="test-person"><option value="">— selectați persoana —</option></select></div>
+        <div class="form-group"><label>Data testului</label><input type="date" id="test-date"></div>
+        <div class="form-group"><label>Ora testului</label><input type="time" id="test-time"></div>
+        <div class="form-group"><label>Locul testării (poziție la accident)</label><input type="text" id="test-location" placeholder="ex: lângă autoturism 1"></div>
+        <div class="form-group"><label>Rezultat (valoare / calitativ)</label><input type="text" id="test-result" placeholder="ex: 0.78 mg/l | POZITIV | NEGATIV"></div>
+        <div class="form-group"><label>Dispozitiv / Kit folosit</label><input type="text" id="test-device" placeholder="ex: Drager 7510, DrugWipe 5S"></div>
+        <div class="form-group"><label>Seria dispozitivului</label><input type="text" id="test-device-serial" placeholder="Seria/nr."></div>
+        <div class="form-group full"><label>Substanțe detectate (drugtest)</label><div class="checkbox-row"><label><input type="checkbox" id="drug-thc"> THC</label><label><input type="checkbox" id="drug-coc"> Cocaină</label><label><input type="checkbox" id="drug-opi"> Opioide</label><label><input type="checkbox" id="drug-amp"> Amfetamine</label><label><input type="checkbox" id="drug-bzo"> Benzodiazepine</label><label><input type="checkbox" id="drug-met"> Metadonă</label></div></div>
+        <div class="form-group"><label>A refuzat testul?</label><div class="checkbox-row"><label><input type="checkbox" id="test-refused"> Da, a refuzat</label></div></div>
+        <div class="form-group full"><label>Observații test</label><textarea id="test-notes" rows="2" placeholder="Alte mențiuni..."></textarea></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="modal-btn-cancel" data-close="modal-test">Anulează</button><button class="modal-btn-ok" id="btn-test-save">Salvează Testul</button></div>
+  </div>
+</div>
+
+<!-- MODAL MEASUREMENT -->
+<div class="modal-overlay" id="modal-measure">
+  <div class="modal modal-small">
+    <div class="modal-header"><h3>Adaugă Măsurătoare</h3><button class="modal-close" data-close="modal-measure">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Descriere</label><input type="text" id="measure-desc" placeholder="ex: Distanță punct impact – bordură"></div>
+      <div class="form-group"><label>Valoare</label><input type="number" id="measure-val" step="0.01" placeholder="0.00"></div>
+      <div class="form-group"><label>Unitate</label><select id="measure-unit"><option>m</option><option>cm</option><option>km</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="modal-btn-cancel" data-close="modal-measure">Anulează</button><button class="modal-btn-ok" id="btn-measure-save">Adaugă</button></div>
+  </div>
+</div>
+
+<!-- MODAL CONFIRM -->
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal modal-small">
+    <div class="modal-header"><h3>Confirmare</h3><button class="modal-close" data-close="modal-confirm">✕</button></div>
+    <div class="modal-body"><p id="modal-confirm-text">Sigur doriți?</p></div>
+    <div class="modal-footer"><button class="modal-btn-cancel" data-close="modal-confirm">Anulează</button><button class="modal-btn-ok danger" id="btn-confirm-ok">Confirmare</button></div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+<script src="app.js"></script>
+</body>
+</html>
