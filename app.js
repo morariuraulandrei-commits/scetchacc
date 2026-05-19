@@ -303,13 +303,14 @@ function onPointerDown(e) {
       CANVAS.editMode = false;
       hit._dox = wx - hit.x; hit._doy = wy - hit.y; hit._drag = true;
       showPropsFor(hit);
+      showQuickControls(hit);
       openMobilePanel(hit);
     } else if (hit && (hit.type === 'road_poly' || hit.type === 'roundabout' || hit.type === 'building_poly')) {
       if (CANVAS.editMode && CANVAS.stagedOriginal) revertStagedChanges();
-      CANVAS.selected = null; clearProps(); closeMobilePanel();
+      CANVAS.selected = null; clearProps(); closeMobilePanel(); hideQuickControls();
     } else {
       if (CANVAS.editMode && CANVAS.stagedOriginal) revertStagedChanges();
-      CANVAS.selected = null; clearProps(); closeMobilePanel();
+      CANVAS.selected = null; clearProps(); closeMobilePanel(); hideQuickControls();
     }
     CANVAS.drawing = true; drawCanvas(); return;
   }
@@ -590,108 +591,398 @@ function drawObj(ctx, o) {
   ctx.restore();
 }
 
-// ─── SILUETE VEHICULE VEDERE DE SUS ───────────────────────────
+// ─── SILUETE VEHICULE VEDERE DE SUS ─── fiecare tip distinct ──
 function drawVehicleTopView(ctx, o, W, H) {
-  const type = o.type;
-  const col = o.color || '#e8b000';
-  const shadow = 'rgba(0,0,0,0.35)';
-
-  // Umbră
-  ctx.fillStyle = shadow;
-  ctx.beginPath();
-  roundRect(ctx, -W/2+3, -H/2+3, W, H, Math.min(W,H)*0.15);
-  ctx.fill();
-
-  if (type === 'pedestrian') {
-    // Pieton - cerc corp + elipsă cap
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.ellipse(0, H*0.1, W*0.38, H*0.38, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffe0b2';
-    ctx.beginPath(); ctx.arc(0, -H*0.32, W*0.28, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#0008'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.ellipse(0, H*0.1, W*0.38, H*0.38, 0, 0, Math.PI*2); ctx.stroke();
-    drawLabel(ctx, o.name||'Pieton', 0, H*0.55, col);
-    return;
+  const col = o.color || '#e74c3c';
+  switch(o.type) {
+    case 'car':       drawCar(ctx, W, H, col); break;
+    case 'truck':     drawTruck(ctx, W, H, col); break;
+    case 'moto':      drawMoto(ctx, W, H, col); break;
+    case 'bike':      drawBike(ctx, W, H, col); break;
+    case 'bus':       drawBus(ctx, W, H, col); break;
+    case 'tram':      drawTram(ctx, W, H, col); break;
+    case 'van':       drawVan(ctx, W, H, col); break;
+    case 'ambulance': drawAmbulance(ctx, W, H, col); break;
+    case 'pedestrian':drawPedestrian(ctx, W, H, col); break;
+    case 'animal':    drawAnimal(ctx, W, H, col); break;
+    default:          drawCar(ctx, W, H, col);
   }
-
-  if (type === 'animal') {
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.ellipse(0, 0, W*0.45, H*0.45, 0, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#0008'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.font = `${Math.min(W,H)*0.7}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(o.emoji||'🐄', 0, 0);
-    return;
+  // Nr. înmatriculare / etichetă
+  if (o.label) {
+    const fs = Math.max(5, Math.min(H*0.28, 11));
+    ctx.font = `bold ${fs}px monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(o.label).width + 5;
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(-tw/2, H*0.5+2, tw, fs+3);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(o.label, 0, H*0.5+2+(fs+3)/2);
   }
+}
 
-  // ─── MAȘINI / CAMIOANE / BUS etc ───
+// ── AUTOTURISM ──────────────────────────────────────────────────
+function drawCar(ctx, W, H, col) {
+  const r = H*0.22;
+  // Umbra
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); roundRect(ctx, -W/2+2, -H/2+2, W, H, r); ctx.fill();
   // Corp principal
   ctx.fillStyle = col;
-  ctx.beginPath();
-  roundRect(ctx, -W/2, -H/2, W, H, Math.min(W,H)*0.14);
-  ctx.fill();
-  ctx.strokeStyle = '#0006'; ctx.lineWidth = Math.max(1, H*0.04); ctx.stroke();
-
-  // Parbriz față (sus) - dreptunghi semi-transparent
-  const pW = W*0.68, pH = H*0.18;
-  ctx.fillStyle = 'rgba(180,220,255,0.55)';
-  ctx.beginPath();
-  roundRect(ctx, -pW/2, -H/2 + H*0.06, pW, pH, 3);
-  ctx.fill();
-  ctx.strokeStyle = '#0003'; ctx.lineWidth = 0.5; ctx.stroke();
-
-  // Luneta spate (jos)
-  ctx.fillStyle = 'rgba(180,220,255,0.35)';
-  ctx.beginPath();
-  roundRect(ctx, -pW/2*0.85, H/2 - H*0.06 - pH*0.8, pW*0.85, pH*0.8, 3);
-  ctx.fill();
-
-  if (type === 'car' || type === 'van' || type === 'ambulance') {
-    // Roți (4 colțuri)
-    drawWheel(ctx, -W/2-H*0.08, -H*0.3, H*0.16, H*0.28);
-    drawWheel(ctx,  W/2+H*0.08-H*0.16, -H*0.3, H*0.16, H*0.28);
-    drawWheel(ctx, -W/2-H*0.08,  H*0.02, H*0.16, H*0.28);
-    drawWheel(ctx,  W/2+H*0.08-H*0.16,  H*0.02, H*0.16, H*0.28);
-    // Indicatoare direcție față
-    ctx.fillStyle = '#ff8800';
-    ctx.fillRect(-W/2+2, -H/2+2, W*0.12, H*0.07);
-    ctx.fillRect( W/2-2-W*0.12, -H/2+2, W*0.12, H*0.07);
-  } else if (type === 'moto' || type === 'bike') {
-    // Doar 2 roți
-    drawWheel(ctx, -W*0.28, -H/2-H*0.06, H*0.22, H*0.22);
-    drawWheel(ctx,  W*0.08, H/2-H*0.16,  H*0.22, H*0.22);
-    // Corp mai îngust
-    ctx.fillStyle = col;
-    ctx.beginPath(); roundRect(ctx, -W*0.18, -H/2, W*0.36, H, H*0.15); ctx.fill();
-  } else if (type === 'truck' || type === 'bus' || type === 'tram') {
-    // 6 roți (camioane/bus)
-    drawWheel(ctx, -W/2-H*0.1, -H*0.36, H*0.2, H*0.3);
-    drawWheel(ctx,  W/2+H*0.1-H*0.2, -H*0.36, H*0.2, H*0.3);
-    drawWheel(ctx, -W/2-H*0.1,  0,      H*0.2, H*0.3);
-    drawWheel(ctx,  W/2+H*0.1-H*0.2,  0,      H*0.2, H*0.3);
-    drawWheel(ctx, -W/2-H*0.1,  H*0.2,  H*0.2, H*0.3);
-    drawWheel(ctx,  W/2+H*0.1-H*0.2,  H*0.2,  H*0.2, H*0.3);
-    // Separator cabină/remorcă
-    ctx.strokeStyle = '#0005'; ctx.lineWidth = H*0.05;
-    ctx.beginPath(); ctx.moveTo(-W*0.28, -H/2); ctx.lineTo(-W*0.28, H/2); ctx.stroke();
-    if (type === 'ambulance') {
-      ctx.fillStyle = '#fff'; ctx.font = `bold ${H*0.5}px sans-serif`;
-      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('+', 0, 0);
-    }
-  }
-
-  // Săgeată direcție (față = sus)
+  ctx.beginPath(); roundRect(ctx, -W/2, -H/2, W, H, r); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = H*0.05; ctx.stroke();
+  // Capota (zona motor, in fata)
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.beginPath(); roundRect(ctx, -W*0.38, -H/2, W*0.76, H*0.28, r*0.5); ctx.fill();
+  // Parbriz fata
+  ctx.fillStyle = 'rgba(160,210,255,0.75)';
+  ctx.beginPath(); roundRect(ctx, -W*0.32, -H/2+H*0.29, W*0.64, H*0.19, 3); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 0.8; ctx.stroke();
+  // Geamuri laterale
+  ctx.fillStyle = 'rgba(160,210,255,0.5)';
+  ctx.fillRect(-W/2+H*0.08, -H*0.1, W*0.1, H*0.2);
+  ctx.fillRect( W/2-H*0.18, -H*0.1, W*0.1, H*0.2);
+  // Luneta spate
+  ctx.fillStyle = 'rgba(160,210,255,0.55)';
+  ctx.beginPath(); roundRect(ctx, -W*0.28, H/2-H*0.3, W*0.56, H*0.17, 3); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 0.8; ctx.stroke();
+  // Roti 4 (negre cu jante)
+  const wr = H*0.18, wh = H*0.3;
+  const wx1 = -W/2-wr*0.3, wx2 = W/2-wr*0.7;
+  drawWheel(ctx, wx1, -H*0.28, wr, wh);
+  drawWheel(ctx, wx2, -H*0.28, wr, wh);
+  drawWheel(ctx, wx1,  H*0.01, wr, wh);
+  drawWheel(ctx, wx2,  H*0.01, wr, wh);
+  // Faruri fata
+  ctx.fillStyle = '#ffe066';
+  ctx.fillRect(-W/2, -H/2, W*0.1, H*0.14);
+  ctx.fillRect( W/2-W*0.1, -H/2, W*0.1, H*0.14);
+  // Stopuri spate
+  ctx.fillStyle = '#ff3333';
+  ctx.fillRect(-W/2, H/2-H*0.14, W*0.1, H*0.14);
+  ctx.fillRect( W/2-W*0.1, H/2-H*0.14, W*0.1, H*0.14);
+  // Sageta directie (sus = fata)
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  const aw = W*0.2, ah = H*0.12;
   ctx.beginPath();
-  ctx.moveTo(0, -H/2-ah*0.5);
-  ctx.lineTo( aw/2, -H/2+ah*0.5);
-  ctx.lineTo(-aw/2, -H/2+ah*0.5);
+  ctx.moveTo(0,-H/2-H*0.18); ctx.lineTo(-W*0.14,-H/2-H*0.02); ctx.lineTo(W*0.14,-H/2-H*0.02);
   ctx.closePath(); ctx.fill();
+}
 
-  // Tip vehicul label mic
-  if (!o.label && o.name) {
-    drawLabel(ctx, o.name, 0, H*0.62, col);
+// ── CAMION ──────────────────────────────────────────────────────
+function drawTruck(ctx, W, H, col) {
+  // Remorca (2/3 din lungime, spate)
+  ctx.fillStyle = col;
+  ctx.beginPath(); roundRect(ctx, -W/2, -H/2, W*0.62, H, 3); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = H*0.05; ctx.stroke();
+  // Dungi reflectorizante pe remorca
+  ctx.fillStyle = 'rgba(255,200,0,0.4)';
+  for(let i=0;i<3;i++) ctx.fillRect(-W/2+W*0.08+i*W*0.14, -H/2, W*0.06, H);
+  // Cabina (1/3, fata)
+  ctx.fillStyle = col === '#3498db' ? '#2980b9' : col;
+  ctx.beginPath(); roundRect(ctx, W*0.14, -H/2, W*0.36, H, H*0.18); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.stroke();
+  // Parbriz cabina
+  ctx.fillStyle = 'rgba(160,210,255,0.8)';
+  ctx.beginPath(); roundRect(ctx, W*0.22, -H/2+H*0.12, W*0.22, H*0.28, 3); ctx.fill();
+  // Separator cabina/remorca
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = H*0.08;
+  ctx.beginPath(); ctx.moveTo(W*0.14,-H/2); ctx.lineTo(W*0.14,H/2); ctx.stroke();
+  // Roti 6 (3 pe fiecare parte)
+  const wr = H*0.2, wh = H*0.32;
+  drawWheel(ctx, -W/2-wr*0.3, -H*0.3, wr, wh);
+  drawWheel(ctx, -W/2-wr*0.3,  H*0.0, wr, wh);
+  drawWheel(ctx,  W*0.2,       -H*0.3, wr, wh);
+  drawWheel(ctx, -W/2-wr*0.3,  H*0.32, wr, wh);
+  drawWheel(ctx,  W/2-wr*0.7,  -H*0.3, wr, wh);
+  drawWheel(ctx,  W/2-wr*0.7,   H*0.0, wr, wh);
+  // Faruri + sageta
+  ctx.fillStyle = '#ffe066';
+  ctx.fillRect(W/2-W*0.06, -H/2, W*0.06, H*0.16);
+  ctx.fillRect(W/2-W*0.06,  H/2-H*0.16, W*0.06, H*0.16);
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.2,-H*0.0);
+  ctx.lineTo(W/2,      -H*0.18);
+  ctx.lineTo(W/2,       H*0.18);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── MOTOCICLETA ──────────────────────────────────────────────────
+function drawMoto(ctx, W, H, col) {
+  // Roata fata
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.ellipse(W*0.32, 0, H*0.48, H*0.48, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#444'; ctx.lineWidth = H*0.1; ctx.stroke();
+  // Roata spate
+  ctx.beginPath(); ctx.ellipse(-W*0.28, 0, H*0.44, H*0.44, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#444'; ctx.lineWidth = H*0.1; ctx.stroke();
+  // Jante
+  ctx.strokeStyle = '#888'; ctx.lineWidth = H*0.07;
+  ctx.beginPath(); ctx.arc(W*0.32, 0, H*0.25, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-W*0.28, 0, H*0.22, 0, Math.PI*2); ctx.stroke();
+  // Cadru moto
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(-W*0.15, -H*0.3);
+  ctx.lineTo( W*0.2,  -H*0.3);
+  ctx.lineTo( W*0.2,   H*0.3);
+  ctx.lineTo(-W*0.15,  H*0.3);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = H*0.06; ctx.stroke();
+  // Rezervor
+  ctx.fillStyle = col === '#e67e22' ? '#d35400' : col;
+  ctx.beginPath(); ctx.ellipse(0, 0, W*0.14, H*0.35, 0, 0, Math.PI*2); ctx.fill();
+  // Ghidon
+  ctx.strokeStyle = '#888'; ctx.lineWidth = H*0.12;
+  ctx.beginPath(); ctx.moveTo(W*0.18, -H*0.4); ctx.lineTo(W*0.18, H*0.4); ctx.stroke();
+  ctx.lineCap = 'round';
+  // Sageta
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.25,0); ctx.lineTo(W/2,-H*0.28); ctx.lineTo(W/2,H*0.28);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── BICICLETA ────────────────────────────────────────────────────
+function drawBike(ctx, W, H, col) {
+  // Roata fata
+  ctx.strokeStyle = '#333'; ctx.lineWidth = H*0.15;
+  ctx.beginPath(); ctx.arc(W*0.3, 0, H*0.42, 0, Math.PI*2); ctx.stroke();
+  // Roata spate
+  ctx.beginPath(); ctx.arc(-W*0.3, 0, H*0.42, 0, Math.PI*2); ctx.stroke();
+  // Spite roti
+  ctx.strokeStyle = '#666'; ctx.lineWidth = H*0.06;
+  for(let a=0; a<Math.PI; a+=Math.PI/4) {
+    ctx.beginPath();
+    ctx.moveTo(W*0.3+H*0.42*Math.cos(a), H*0.42*Math.sin(a));
+    ctx.lineTo(W*0.3-H*0.42*Math.cos(a),-H*0.42*Math.sin(a));
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-W*0.3+H*0.42*Math.cos(a), H*0.42*Math.sin(a));
+    ctx.lineTo(-W*0.3-H*0.42*Math.cos(a),-H*0.42*Math.sin(a));
+    ctx.stroke();
   }
+  // Butuc roti
+  ctx.fillStyle = '#888';
+  ctx.beginPath(); ctx.arc(W*0.3,0, H*0.1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-W*0.3,0,H*0.1,0,Math.PI*2); ctx.fill();
+  // Cadru triunghiular
+  ctx.strokeStyle = col; ctx.lineWidth = H*0.22;
+  ctx.beginPath();
+  ctx.moveTo(-W*0.3, 0); ctx.lineTo(0, -H*0.35);
+  ctx.lineTo(W*0.3, 0); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -H*0.35); ctx.lineTo(0, H*0.2); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(-W*0.3, 0); ctx.lineTo(0, H*0.2); ctx.stroke();
+  // Ghidon
+  ctx.strokeStyle = '#555'; ctx.lineWidth = H*0.15;
+  ctx.beginPath(); ctx.moveTo(W*0.26, -H*0.4); ctx.lineTo(W*0.26, H*0.4); ctx.stroke();
+  // Sageta
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.3,0); ctx.lineTo(W/2,-H*0.3); ctx.lineTo(W/2,H*0.3);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── AUTOBUZ ──────────────────────────────────────────────────────
+function drawBus(ctx, W, H, col) {
+  // Corp
+  ctx.fillStyle = col;
+  ctx.beginPath(); roundRect(ctx, -W/2, -H/2, W, H, H*0.12); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = H*0.05; ctx.stroke();
+  // Banda colorata laterala
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(-W/2, -H*0.08, W, H*0.16);
+  // Geamuri (5 buc)
+  const gw = W*0.1, gh = H*0.28, gy = -H*0.32;
+  ctx.fillStyle = 'rgba(160,210,255,0.65)';
+  for(let i=0;i<5;i++) {
+    ctx.beginPath();
+    roundRect(ctx, -W/2+W*0.06+i*(gw+W*0.06), gy, gw, gh, 2);
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.5; ctx.stroke();
+  }
+  // Parbriz fata
+  ctx.fillStyle = 'rgba(160,210,255,0.8)';
+  ctx.beginPath(); roundRect(ctx, W*0.3, -H*0.38, W*0.18, H*0.3, 3); ctx.fill();
+  // Usa
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(-W/2+W*0.06, H*0.12, W*0.1, H*0.34);
+  // Roti 6
+  const wr=H*0.22, wh=H*0.34;
+  drawWheel(ctx, -W/2-wr*0.3, -H*0.28, wr, wh);
+  drawWheel(ctx, -W/2-wr*0.3,  H*0.0,  wr, wh);
+  drawWheel(ctx, -W*0.06,     -H*0.28, wr, wh);
+  drawWheel(ctx, -W*0.06,      H*0.0,  wr, wh);
+  drawWheel(ctx,  W/2-wr*0.7, -H*0.28, wr, wh);
+  drawWheel(ctx,  W/2-wr*0.7,  H*0.0,  wr, wh);
+  // Faruri
+  ctx.fillStyle='#ffe066';
+  ctx.fillRect(W/2-W*0.05, -H/2, W*0.05, H*0.18);
+  ctx.fillRect(W/2-W*0.05,  H/2-H*0.18, W*0.05, H*0.18);
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.22,0); ctx.lineTo(W/2,-H*0.2); ctx.lineTo(W/2,H*0.2);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── TRAMVAI ──────────────────────────────────────────────────────
+function drawTram(ctx, W, H, col) {
+  // Corp
+  ctx.fillStyle = col;
+  ctx.beginPath(); roundRect(ctx, -W/2, -H/2, W, H, H*0.1); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=H*0.04; ctx.stroke();
+  // Banda alba
+  ctx.fillStyle='rgba(255,255,255,0.2)';
+  ctx.fillRect(-W/2+2, -H*0.05, W-4, H*0.1);
+  // Geamuri multe
+  const gw=W*0.065, gh=H*0.3;
+  ctx.fillStyle='rgba(160,210,255,0.6)';
+  for(let i=0;i<8;i++){
+    ctx.beginPath();
+    roundRect(ctx, -W/2+W*0.04+i*(gw+W*0.04), -H*0.38, gw, gh, 2);
+    ctx.fill();
+  }
+  // Linii de sina
+  ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=H*0.06;
+  ctx.beginPath(); ctx.moveTo(-W/2,-H*0.42); ctx.lineTo(W/2,-H*0.42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-W/2, H*0.42); ctx.lineTo(W/2, H*0.42); ctx.stroke();
+  // Pantograf (fir aerian)
+  ctx.strokeStyle='#aaa'; ctx.lineWidth=H*0.04; ctx.setLineDash([W*0.04,W*0.02]);
+  ctx.beginPath(); ctx.moveTo(-W/2,0); ctx.lineTo(W/2,0); ctx.stroke();
+  ctx.setLineDash([]);
+  // Roti sina (rectangulare)
+  ctx.fillStyle='#333';
+  for(let i=0;i<4;i++){
+    ctx.fillRect(-W/2+W*0.1+i*W*0.22, -H/2-H*0.06, W*0.12, H*0.1);
+    ctx.fillRect(-W/2+W*0.1+i*W*0.22,  H/2-H*0.04, W*0.12, H*0.1);
+  }
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.22,0); ctx.lineTo(W/2,-H*0.22); ctx.lineTo(W/2,H*0.22);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── MICROBUZ ──────────────────────────────────────────────────────
+function drawVan(ctx, W, H, col) {
+  ctx.fillStyle=col;
+  ctx.beginPath(); roundRect(ctx,-W/2,-H/2,W,H,H*0.18); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=H*0.05; ctx.stroke();
+  // Parbriz mare inalt
+  ctx.fillStyle='rgba(160,210,255,0.75)';
+  ctx.beginPath(); roundRect(ctx, W*0.15,-H/2+H*0.08, W*0.32, H*0.38, 4); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=0.8; ctx.stroke();
+  // Geam lateral (2 buc)
+  ctx.fillStyle='rgba(160,210,255,0.5)';
+  ctx.beginPath(); roundRect(ctx, -W*0.3,-H*0.3, W*0.2, H*0.28, 2); ctx.fill();
+  ctx.beginPath(); roundRect(ctx, -W*0.06,-H*0.3, W*0.2, H*0.28, 2); ctx.fill();
+  // Usa glisanta
+  ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=H*0.04;
+  ctx.beginPath(); ctx.moveTo(-W*0.08,-H/2); ctx.lineTo(-W*0.08,H/2); ctx.stroke();
+  // Roti 4
+  const wr=H*0.2,wh=H*0.32;
+  drawWheel(ctx, W/2-wr*0.7, -H*0.28, wr, wh);
+  drawWheel(ctx, W/2-wr*0.7,  H*0.0,  wr, wh);
+  drawWheel(ctx, -W/2-wr*0.3,-H*0.28, wr, wh);
+  drawWheel(ctx, -W/2-wr*0.3, H*0.0,  wr, wh);
+  ctx.fillStyle='#ffe066';
+  ctx.fillRect(W/2-W*0.06,-H/2,W*0.06,H*0.14);
+  ctx.fillRect(W/2-W*0.06, H/2-H*0.14,W*0.06,H*0.14);
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.2,0); ctx.lineTo(W/2,-H*0.2); ctx.lineTo(W/2,H*0.2);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── AMBULANTA ────────────────────────────────────────────────────
+function drawAmbulance(ctx, W, H, col) {
+  // Corp alb
+  ctx.fillStyle='#f8f8f8';
+  ctx.beginPath(); roundRect(ctx,-W/2,-H/2,W,H,H*0.15); ctx.fill();
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=H*0.05; ctx.stroke();
+  // Banda verde laterala
+  ctx.fillStyle='#27ae60';
+  ctx.fillRect(-W/2,H*0.28,W,H*0.22);
+  ctx.fillRect(-W/2,-H*0.5,W,H*0.22);
+  // Cruce rosie
+  ctx.fillStyle='#e74c3c';
+  ctx.fillRect(-W*0.06,-H*0.3,W*0.12,H*0.6);
+  ctx.fillRect(-W*0.25,-H*0.08,W*0.5,H*0.16);
+  // Parbriz
+  ctx.fillStyle='rgba(160,210,255,0.8)';
+  ctx.beginPath(); roundRect(ctx, W*0.18,-H/2+H*0.1, W*0.28,H*0.32,3); ctx.fill();
+  // Girofar albastru
+  ctx.fillStyle='#3498db';
+  ctx.beginPath(); roundRect(ctx,-W*0.12,-H/2-H*0.08,W*0.24,H*0.1,3); ctx.fill();
+  // Roti 4
+  const wr=H*0.18,wh=H*0.3;
+  drawWheel(ctx, W/2-wr*0.7,-H*0.28,wr,wh);
+  drawWheel(ctx, W/2-wr*0.7, H*0.0,wr,wh);
+  drawWheel(ctx,-W/2-wr*0.3,-H*0.28,wr,wh);
+  drawWheel(ctx,-W/2-wr*0.3, H*0.0,wr,wh);
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(W/2+H*0.2,0); ctx.lineTo(W/2,-H*0.2); ctx.lineTo(W/2,H*0.2);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── PIETON ────────────────────────────────────────────────────────
+function drawPedestrian(ctx, W, H, col) {
+  // Cap
+  ctx.fillStyle='#f5cba7';
+  ctx.beginPath(); ctx.arc(0,-H*0.32,H*0.18,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=H*0.04; ctx.stroke();
+  // Trunchi
+  ctx.fillStyle=col;
+  ctx.beginPath();
+  ctx.moveTo(-H*0.17,-H*0.12); ctx.lineTo(H*0.17,-H*0.12);
+  ctx.lineTo(H*0.14,H*0.18); ctx.lineTo(-H*0.14,H*0.18);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=H*0.03; ctx.stroke();
+  // Brate (in miscare)
+  ctx.strokeStyle=col; ctx.lineWidth=H*0.09; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-H*0.17,H*0.0); ctx.lineTo(-H*0.3,H*0.15); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(H*0.17,H*0.0); ctx.lineTo(H*0.3,-H*0.05); ctx.stroke();
+  // Picioare (mers)
+  ctx.strokeStyle='#2c3e50'; ctx.lineWidth=H*0.1;
+  ctx.beginPath(); ctx.moveTo(-H*0.08,H*0.18); ctx.lineTo(-H*0.14,H*0.42); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(H*0.08,H*0.18); ctx.lineTo(H*0.18,H*0.38); ctx.stroke();
+  // Sageta directie
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(0,-H/2-H*0.12); ctx.lineTo(-H*0.14,-H/2+H*0.02); ctx.lineTo(H*0.14,-H/2+H*0.02);
+  ctx.closePath(); ctx.fill();
+}
+
+// ── ANIMAL (VACA) ─────────────────────────────────────────────────
+function drawAnimal(ctx, W, H, col) {
+  // Corp oval
+  ctx.fillStyle=col||'#8B6914';
+  ctx.beginPath(); ctx.ellipse(0,H*0.08,W*0.44,H*0.36,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=H*0.04; ctx.stroke();
+  // Pete albe
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.beginPath(); ctx.ellipse(-W*0.1,H*0.05,W*0.12,H*0.14,0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(W*0.15,H*0.12,W*0.1,H*0.1,-0.3,0,Math.PI*2); ctx.fill();
+  // Cap
+  ctx.fillStyle=col||'#8B6914';
+  ctx.beginPath(); ctx.ellipse(W*0.34,-H*0.1,W*0.18,H*0.22,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=H*0.04; ctx.stroke();
+  // Urechi
+  ctx.fillStyle=col||'#8B6914';
+  ctx.beginPath(); ctx.ellipse(W*0.28,-H*0.3,W*0.07,H*0.14,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(W*0.42,-H*0.3,W*0.07,H*0.14,0.3,0,Math.PI*2); ctx.fill();
+  // Picioare 4
+  ctx.fillStyle='#5d3a00';
+  ctx.fillRect(-W*0.3, H*0.38, W*0.12, H*0.22);
+  ctx.fillRect(-W*0.1, H*0.38, W*0.12, H*0.22);
+  ctx.fillRect( W*0.08,H*0.38, W*0.12, H*0.22);
+  ctx.fillRect( W*0.24,H*0.32, W*0.12, H*0.22);
+  // Coada
+  ctx.strokeStyle=col||'#8B6914'; ctx.lineWidth=H*0.08; ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(-W*0.44,H*0.08); ctx.quadraticCurveTo(-W*0.56,-H*0.15,-W*0.48,-H*0.3);
+  ctx.stroke();
 }
 
 function drawWheel(ctx, x, y, w, h) {
@@ -896,6 +1187,73 @@ function showLabelEditorForObj(o, sx, sy) {
 }
 
 // ===== PROPS =====
+// ===== QUICK CONTROLS (toolbar rotire+marime) =====
+function showQuickControls(o) {
+  const qc = document.getElementById('quick-controls');
+  if (!qc || !o || o.type === 'road_poly' || o.type === 'roundabout' || o.type === 'building_poly' || o.type === 'line') {
+    if (qc) qc.style.display = 'none';
+    return;
+  }
+  qc.style.display = 'flex';
+  const rot = Math.round(o.rotation || 0);
+  const sc  = Math.round((o.scale || 1) * 100);
+  document.getElementById('qc-rotation').value = rot;
+  document.getElementById('qc-rot-val').textContent = rot + '°';
+  document.getElementById('qc-scale').value = sc;
+  document.getElementById('qc-scale-val').textContent = sc + '%';
+  // Scroll toolbar to show quick controls
+  const tb = document.getElementById('sketch-toolbar');
+  if (tb) setTimeout(() => { tb.scrollLeft = tb.scrollWidth; }, 50);
+}
+
+function hideQuickControls() {
+  const qc = document.getElementById('quick-controls');
+  if (qc) qc.style.display = 'none';
+}
+
+function qcRotate(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.rotation = +val;
+  CANVAS.editMode = true;
+  document.getElementById('qc-rot-val').textContent = Math.round(+val) + '°';
+  syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
+  drawCanvas();
+}
+
+function qcScale(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.scale = +val / 100;
+  CANVAS.editMode = true;
+  document.getElementById('qc-scale-val').textContent = Math.round(+val) + '%';
+  syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
+  drawCanvas();
+}
+
+function qcRotateBy(deg) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.rotation = (((CANVAS.selected.rotation || 0) + deg) % 360 + 360) % 360;
+  CANVAS.editMode = true;
+  document.getElementById('qc-rotation').value = Math.round(CANVAS.selected.rotation);
+  document.getElementById('qc-rot-val').textContent = Math.round(CANVAS.selected.rotation) + '°';
+  syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
+  drawCanvas();
+}
+
+function qcScaleBy(factor) {
+  if (!CANVAS.selected) return;
+  const ns = Math.max(0.2, Math.min(5, (CANVAS.selected.scale || 1) * factor));
+  CANVAS.selected.scale = ns;
+  CANVAS.editMode = true;
+  document.getElementById('qc-scale').value = Math.round(ns * 100);
+  document.getElementById('qc-scale-val').textContent = Math.round(ns * 100) + '%';
+  syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
+  drawCanvas();
+}
+
 function initProps() {
   document.getElementById('prop-scale').addEventListener('input', e => { onScaleInput(e.target.value); });
   document.getElementById('prop-rotation').addEventListener('input', e => { onRotationInput(e.target.value); });
