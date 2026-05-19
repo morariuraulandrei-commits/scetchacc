@@ -92,6 +92,35 @@
           <button class="tool-btn" data-tool="line"><svg viewBox="0 0 24 24"><line x1="3" y1="21" x2="21" y2="3"/><line x1="3" y1="21" x2="7" y2="21"/><line x1="3" y1="21" x2="3" y2="17"/><line x1="21" y1="3" x2="17" y2="3"/><line x1="21" y1="3" x2="21" y2="7"/></svg><span>Măsură</span></button>
           <button class="tool-btn" data-tool="text"><svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg><span>Text</span></button>
           <button class="tool-btn" data-tool="eraser"><svg viewBox="0 0 24 24"><path d="M20 20H7L3 16l11-11 7 7-1 8z"/><line x1="6" y1="20" x2="14" y2="12"/></svg><span>Șterge</span></button>
+        
+        <!-- QUICK CONTROLS: Rotire + Mărime obiect selectat -->
+        <div class="toolbar-section quick-controls" id="quick-controls" style="display:none">
+          <div class="ts-label">⚡ Selectat</div>
+          <div class="qc-row">
+            <span class="qc-label">↻</span>
+            <input type="range" id="qc-rotation" min="0" max="360" value="0" oninput="qcRotate(this.value)" class="qc-slider">
+            <span class="qc-val" id="qc-rot-val">0°</span>
+          </div>
+          <div class="qc-row">
+            <span class="qc-label">⤢</span>
+            <input type="range" id="qc-scale" min="20" max="500" value="100" oninput="qcScale(this.value)" class="qc-slider">
+            <span class="qc-val" id="qc-scale-val">100%</span>
+          </div>
+          <div class="qc-btns">
+            <button onclick="qcRotateBy(-90)">↺90</button>
+            <button onclick="qcRotateBy(-15)">↺15</button>
+            <button onclick="qcRotateBy(15)">↻15</button>
+            <button onclick="qcRotateBy(90)">↻90</button>
+          </div>
+          <div class="qc-btns">
+            <button onclick="qcScaleBy(0.5)">½x</button>
+            <button onclick="qcScaleBy(0.8)">−</button>
+            <button onclick="qcScaleBy(1.25)">+</button>
+            <button onclick="qcScaleBy(2.0)">2x</button>
+          </div>
+          <button class="qc-apply" onclick="applyProps()">✔ OK</button>
+          <button class="qc-cancel" onclick="revertStagedChanges()">✕</button>
+        </div>
         </div>
         <div class="toolbar-section">
           <div class="ts-label">Vehicule</div>
