@@ -37,16 +37,16 @@ const CANVAS = {
 };
 
 const ITEM_MAP = {
-  car:             { emoji: '🚗', label: 'Autoturism', w: 36, h: 16 },
-  truck:           { emoji: '🚛', label: 'Camion', w: 72, h: 22 },
-  moto:            { emoji: '🏍️', label: 'Motocicletă', w: 22, h: 10 },
-  tram:            { emoji: '🚋', label: 'Tramvai', w: 144, h: 22 },
-  bus:             { emoji: '🚌', label: 'Autobuz', w: 96, h: 22 },
-  bike:            { emoji: '🚲', label: 'Bicicletă', w: 18, h: 8 },
-  van:             { emoji: '🚐', label: 'Microbuz', w: 48, h: 18 },
-  ambulance:       { emoji: '🚑', label: 'Ambulanță', w: 48, h: 18 },
-  pedestrian:      { emoji: '🚶', label: 'Pieton', w: 5, h: 5 },
-  animal:          { emoji: '🐄', label: 'Animal', w: 16, h: 10 },
+  car:             { emoji: '🚗', label: 'Autoturism', w: 36, h: 16, color: '#e74c3c' },
+  truck:           { emoji: '🚛', label: 'Camion',     w: 72, h: 22, color: '#3498db' },
+  moto:            { emoji: '🏍️', label: 'Moto',       w: 22, h: 10, color: '#e67e22' },
+  tram:            { emoji: '🚋', label: 'Tramvai',    w: 144,h: 22, color: '#1abc9c' },
+  bus:             { emoji: '🚌', label: 'Autobuz',    w: 96, h: 22, color: '#f39c12' },
+  bike:            { emoji: '🚲', label: 'Bicicletă',  w: 18, h:  8, color: '#27ae60' },
+  van:             { emoji: '🚐', label: 'Microbuz',   w: 48, h: 18, color: '#9b59b6' },
+  ambulance:       { emoji: '🚑', label: 'Ambulanță',  w: 48, h: 18, color: '#ecf0f1' },
+  pedestrian:      { emoji: '🚶', label: 'Pieton',     w:  5, h:  8, color: '#3498db' },
+  animal:          { emoji: '🐄', label: 'Animal',     w: 16, h: 10, color: '#8B6914' },
   'sign-stop':     { emoji: '🛑', label: 'STOP', w: 28, h: 28 },
   'sign-priority': { emoji: '🔶', label: 'Prioritate', w: 28, h: 28 },
   'sign-yield':    { emoji: '⚠️', label: 'Cedează', w: 28, h: 28 },
@@ -319,11 +319,39 @@ function onPointerDown(e) {
       id: uid(), type: CANVAS.spawnItem,
       x: wx - def.w / 2, y: wy - def.h / 2,
       w: def.w, h: def.h, rotation: 0, scale: 1,
-      label: '', color: '#e74c3c', note: '', personLink: '',
+      label: '', color: def.color || '#e74c3c', note: '', personLink: '',
       emoji: def.emoji, name: def.label,
+      _preview: true,  // marcat ca preview — NU salvat încă
     };
-    CANVAS.objects.push(obj); CANVAS.selected = obj; showPropsFor(obj);
-    saveHistory(); drawCanvas(); return;
+    // Șterge preview anterior dacă există
+    CANVAS.objects = CANVAS.objects.filter(o => !o._preview);
+    CANVAS.objects.push(obj);
+    CANVAS.selected = obj;
+    CANVAS.editMode = true;
+    CANVAS.stagedOriginal = null; // e nou, nu are original
+    showPropsFor(obj);
+    openMobilePanel(obj);
+    showEditingIndicator();
+    // NU saveHistory — doar la Aplică
+    drawCanvas(); return;
+  }
+  if (CANVAS.tool === 'rotate') {
+    const hit = hitTest(wx, wy);
+    if (hit && hit.type !== 'road_poly' && hit.type !== 'roundabout' && hit.type !== 'building_poly') {
+      // Selectează și intră în modul rotire prin drag
+      CANVAS.selected = hit;
+      CANVAS.stagedOriginal = JSON.stringify({x:hit.x,y:hit.y,rotation:hit.rotation||0,scale:hit.scale||1,label:hit.label||'',note:hit.note||''});
+      CANVAS.editMode = false;
+      CANVAS.draggingHandle = 'rotate';
+      const cx = hit.x + hit.w*(hit.scale||1)/2;
+      const cy = hit.y + hit.h*(hit.scale||1)/2;
+      CANVAS.handleStart = { cx, cy, startRot: hit.rotation||0 };
+      hit._cx = cx; hit._cy = cy;
+      CANVAS.drawing = true;
+      showPropsFor(hit);
+      drawCanvas();
+    }
+    return;
   }
   if (CANVAS.tool === 'eraser') {
     const hit = hitTest(wx, wy);
@@ -526,6 +554,11 @@ function drawObj(ctx, o) {
   if (o.type === 'road_poly') { drawRoadPoly(ctx, o); return; }
   if (o.type === 'roundabout') { drawRoundabout(ctx, o); return; }
   ctx.save();
+  // Obiect preview — semitransparent cu contur punctat
+  if (o._preview) {
+    ctx.globalAlpha = 0.65;
+    ctx.setLineDash([4/CANVAS.zoom, 3/CANVAS.zoom]);
+  }
   if (o.type === 'line') {
     ctx.strokeStyle = o.color || '#e74c3c'; ctx.lineWidth = (o.lineWidth||2)/CANVAS.zoom;
     ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(o.x2,o.y2); ctx.stroke();
@@ -553,6 +586,7 @@ function drawObj(ctx, o) {
       ctx.fillStyle = '#fff'; ctx.fillText(o.label, 0, H*0.28 + th/2);
     }
   }
+  if (o._preview) { ctx.globalAlpha = 1; ctx.setLineDash([]); }
   ctx.restore();
 }
 
@@ -900,6 +934,7 @@ function applyProps() {
   o.color=document.getElementById('prop-color').value;
   o.note=document.getElementById('prop-note').value;
   o.personLink=document.getElementById('prop-person-link').value;
+  delete o._preview;  // confirmat — nu mai e preview
   CANVAS.editMode = false;
   CANVAS.stagedOriginal = null;
   saveHistory(); drawCanvas();
@@ -908,9 +943,15 @@ function applyProps() {
 }
 
 function revertStagedChanges() {
-  if (!CANVAS.selected || !CANVAS.stagedOriginal) return;
-  const orig = JSON.parse(CANVAS.stagedOriginal);
-  Object.assign(CANVAS.selected, orig);
+  if (!CANVAS.selected) return;
+  if (CANVAS.selected._preview) {
+    // Era preview (neconfirmat) → șterge
+    CANVAS.objects = CANVAS.objects.filter(o => o !== CANVAS.selected);
+    CANVAS.selected = null; clearProps(); closeMobilePanel();
+  } else if (CANVAS.stagedOriginal) {
+    const orig = JSON.parse(CANVAS.stagedOriginal);
+    Object.assign(CANVAS.selected, orig);
+  }
   CANVAS.editMode = false;
   CANVAS.stagedOriginal = null;
   hideEditingIndicator();
@@ -997,6 +1038,7 @@ function saveMobilePanel() {
   o.note = document.getElementById('mop-note').value;
   o.rotation = +document.getElementById('mop-rotation').value||0;
   o.scale = +document.getElementById('mop-scale').value/100;
+  delete o._preview;
   CANVAS.editMode = false;
   CANVAS.stagedOriginal = null;
   saveHistory(); drawCanvas();
