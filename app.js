@@ -1112,7 +1112,7 @@ out body;
 >;
 out skel qt;`;
 
-  toast('Se descarcă geometria OSM...', 'info');
+  toast('Se descarcă date OSM... (5-15 sec)', 'info');
 
   const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
   const r = await fetch(url, { headers: { 'User-Agent': 'ScetchACC/2.2' } });
@@ -1123,6 +1123,14 @@ out skel qt;`;
 // ===== PARSARE ȘI GENERARE SCHIȚĂ =====
 async function generateSketchFromOSM(lat, lng, radiusMeters) {
   try {
+    // Trec pe tab schiță ÎNAINTE de a genera (pentru canvas dimensions corecte)
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelector('[data-tab="sketch"]').classList.add('active');
+    document.getElementById('tab-sketch').classList.add('active');
+    resizeCanvas();
+    await new Promise(r => setTimeout(r, 100)); // wait for resize
+
     const data = await queryOverpassForArea(lat, lng, radiusMeters);
 
     // Index noduri
@@ -1254,12 +1262,7 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
     const nRb = roundabouts.length;
     toast(`✅ Schiță generată: ${nRoads} drumuri${nRb ? ', ' + nRb + ' sens giratoriu' : ''}`, 'success');
 
-    // Treci automat la tab schiță
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    document.querySelector('[data-tab="sketch"]').classList.add('active');
-    document.getElementById('tab-sketch').classList.add('active');
-    setTimeout(resizeCanvas, 50);
+
 
   } catch(err) {
     console.error('OSM error:', err);
@@ -1426,7 +1429,7 @@ function initOSMSketch() {
   const btn = document.createElement('button');
   btn.className = 'map-action-btn osm-sketch-btn';
   btn.id = 'btn-osm-sketch';
-  btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round"><path d="M3 3h18v18H3z"/><path d="M9 9h6M9 12h6M9 15h4"/></svg> Generează Schiță`;
+  btn.innerHTML = `🗺️ Generează Schiță`;
   btn.style.cssText = 'background:var(--accent);color:var(--bg-0);font-weight:700;border-color:transparent;';
 
   // Adaug selectorul de rază
@@ -1447,16 +1450,28 @@ function initOSMSketch() {
   }
 
   btn.addEventListener('click', async () => {
-    if (!APP.location.lat) {
-      toast('Selectați mai întâi o locație pe hartă!', 'error'); return;
+    // Folosim locația selectată SAU centrul hărții curente
+    let lat = APP.location.lat;
+    let lng = APP.location.lng;
+    if (!lat && APP.leafletMap) {
+      const c = APP.leafletMap.getCenter();
+      lat = c.lat; lng = c.lng;
+    }
+    if (!lat) {
+      toast('Caută o adresă sau activează GPS mai întâi!', 'error'); return;
     }
     const radius = parseInt(document.getElementById('osm-radius-select').value) || 120;
-    btn.disabled = true; btn.textContent = '⏳ Se generează...';
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.textContent = '⏳ Se descarcă OSM...';
     try {
-      await generateSketchFromOSM(APP.location.lat, APP.location.lng, radius);
+      await generateSketchFromOSM(lat, lng, radius);
+    } catch(err) {
+      toast('Eroare: ' + err.message, 'error');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = `<svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round"><path d="M3 3h18v18H3z"/><path d="M9 9h6M9 12h6M9 15h4"/></svg> Generează Schiță`;
+      btn.style.opacity = '1';
+      btn.innerHTML = `🗺️ Generează Schiță`;
     }
   });
 }
