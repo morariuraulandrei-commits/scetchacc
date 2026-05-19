@@ -28,6 +28,12 @@ const CANVAS = {
   history: [], historyIdx: -1,
   tempLine: null,
   draggingHandle: null, handleStart: null,
+  // Staged: snapshot obiect înainte de editare live
+  // Modificările live sunt TEMPORARE până la "Aplică"
+  stagedOriginal: null,  // snapshot original înainte de drag/rotate/scale
+  editMode: false,       // true = obiect în editare (nu s-a dat Aplică)
+  // Rotire cu 2 degete pe obiect
+  rotateTouchStart: null,
 };
 
 const ITEM_MAP = {
@@ -192,11 +198,33 @@ function onTouchMove(e) {
   e.preventDefault();
   if (e.touches.length === 2) {
     const [t1, t2] = e.touches;
+    const rect = CANVAS.el.getBoundingClientRect();
     const d = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+    const midX = (t1.clientX + t2.clientX)/2 - rect.left;
+    const midY = (t1.clientY + t2.clientY)/2 - rect.top;
+    // Dacă e un obiect selectat și centrul gestului e aproape de el → ROTIRE cu 2 degete
+    if (CANVAS.selected && _lastTouches.length >= 2 && CANVAS.tool === 'select') {
+      const { wx: midWx, wy: midWy } = s2w(midX, midY);
+      const sel = CANVAS.selected;
+      const selCx = sel._cx || (sel.x + (sel.w*(sel.scale||1))/2);
+      const selCy = sel._cy || (sel.y + (sel.h*(sel.scale||1))/2);
+      if (Math.hypot(midWx - selCx, midWy - selCy) < Math.max(sel.w, sel.h) * (sel.scale||1)) {
+        // 2 degete pe obiect → rotire
+        const prevAngle = Math.atan2(_lastTouches[0].clientY - _lastTouches[1].clientY,
+                                      _lastTouches[0].clientX - _lastTouches[1].clientX);
+        const currAngle = Math.atan2(t1.clientY - t2.clientY, t1.clientX - t2.clientX);
+        const dAngle = (currAngle - prevAngle) * 180 / Math.PI;
+        sel.rotation = (((sel.rotation||0) + dAngle) % 360 + 360) % 360;
+        CANVAS.editMode = true;
+        syncPropsToObject(sel);
+        showEditingIndicator();
+        _lastTouches = Array.from(e.touches);
+        drawCanvas(); return;
+      }
+    }
     if (_lastTouches.length >= 2) {
       const ld = Math.hypot(_lastTouches[0].clientX - _lastTouches[1].clientX, _lastTouches[0].clientY - _lastTouches[1].clientY);
-      const r = CANVAS.el.getBoundingClientRect();
-      zoomAt((t1.clientX + t2.clientX) / 2 - r.left, (t1.clientY + t2.clientY) / 2 - r.top, d / ld);
+      zoomAt(midX, midY, d / ld);
     }
     _lastTouches = Array.from(e.touches); return;
   }
@@ -247,14 +275,24 @@ function onPointerDown(e) {
     CANVAS.draggingHandle = null;
     const hit = hitTest(wx, wy);
     if (hit && hit.type !== 'road_poly' && hit.type !== 'roundabout' && hit.type !== 'building_poly') {
+      // Dacă era alt obiect selectat cu modificări nesalvate → revert
+      if (CANVAS.selected && CANVAS.selected !== hit && CANVAS.editMode && CANVAS.stagedOriginal) {
+        revertStagedChanges();
+      }
       CANVAS.selected = hit;
+      // Snapshot original pt revert
+      CANVAS.stagedOriginal = JSON.stringify({x:hit.x,y:hit.y,rotation:hit.rotation||0,scale:hit.scale||1,label:hit.label||'',note:hit.note||''});
+      CANVAS.editMode = false;
       hit._dox = wx - hit.x; hit._doy = wy - hit.y; hit._drag = true;
       showPropsFor(hit);
       openMobilePanel(hit);
     } else if (hit && (hit.type === 'road_poly' || hit.type === 'roundabout' || hit.type === 'building_poly')) {
-      // Click pe fond OSM — deselect
+      if (CANVAS.editMode && CANVAS.stagedOriginal) revertStagedChanges();
       CANVAS.selected = null; clearProps(); closeMobilePanel();
-    } else { CANVAS.selected = null; clearProps(); closeMobilePanel(); }
+    } else {
+      if (CANVAS.editMode && CANVAS.stagedOriginal) revertStagedChanges();
+      CANVAS.selected = null; clearProps(); closeMobilePanel();
+    }
     CANVAS.drawing = true; drawCanvas(); return;
   }
   if (CANVAS.tool === 'spawn') {
@@ -287,22 +325,26 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   const { wx, wy } = s2w(e.offsetX, e.offsetY);
   if (CANVAS.panning) { CANVAS.panX = e.offsetX - CANVAS.panStart.x; CANVAS.panY = e.offsetY - CANVAS.panStart.y; drawCanvas(); return; }
-  // Handle ROTIRE
+  // Handle ROTIRE (mouse/touch drag pe handle portocaliu)
   if (CANVAS.draggingHandle === 'rotate' && CANVAS.selected) {
-    const { cx, cy, rot: startRot } = CANVAS.handleStart;
+    const { cx, cy } = CANVAS.handleStart;
     const angle = Math.atan2(wy - cy, wx - cx) * 180 / Math.PI + 90;
     CANVAS.selected.rotation = ((angle % 360) + 360) % 360;
+    CANVAS.editMode = true;
     syncPropsToObject(CANVAS.selected);
+    showEditingIndicator();
     drawCanvas(); return;
   }
-  // Handle SCALE
+  // Handle SCALE (mouse/touch drag pe handle verde)
   if (CANVAS.draggingHandle === 'scale' && CANVAS.selected) {
     const { scale: startScale, dist: startDist } = CANVAS.handleStart;
     const cx = CANVAS.selected._cx||CANVAS.selected.x, cy = CANVAS.selected._cy||CANVAS.selected.y;
     const newDist = Math.hypot(wx-cx, wy-cy)||1;
     const ns = Math.max(0.2, Math.min(5, startScale * newDist / startDist));
     CANVAS.selected.scale = ns;
+    CANVAS.editMode = true;
     syncPropsToObject(CANVAS.selected);
+    showEditingIndicator();
     drawCanvas(); return;
   }
   if (CANVAS.tool === 'select' && CANVAS.drawing && CANVAS.selected?._drag) {
@@ -315,8 +357,18 @@ function onPointerMove(e) {
 
 function onPointerUp(e) {
   if (CANVAS.panning) { CANVAS.panning = false; return; }
-  if (CANVAS.draggingHandle) { CANVAS.draggingHandle = null; CANVAS.drawing = false; saveHistory(); return; }
-  if (CANVAS.tool === 'select' && CANVAS.selected?._drag) { CANVAS.selected._drag = false; CANVAS.drawing = false; saveHistory(); return; }
+  if (CANVAS.draggingHandle) {
+    CANVAS.draggingHandle = null; CANVAS.drawing = false;
+    CANVAS.editMode = true; // marcat ca modificat, așteaptă Aplică
+    // NU saveHistory — doar la Aplică
+    return;
+  }
+  if (CANVAS.tool === 'select' && CANVAS.selected?._drag) {
+    CANVAS.selected._drag = false; CANVAS.drawing = false;
+    CANVAS.editMode = true; // mutat, așteaptă Aplică
+    // NU saveHistory
+    return;
+  }
   if (CANVAS.tool === 'line' && CANVAS.drawing) {
     if (CANVAS.tempLine) {
       const t = CANVAS.tempLine;
@@ -621,7 +673,43 @@ function applyProps() {
   o.color=document.getElementById('prop-color').value;
   o.note=document.getElementById('prop-note').value;
   o.personLink=document.getElementById('prop-person-link').value;
-  saveHistory(); drawCanvas(); toast('✔ Salvat','success');
+  CANVAS.editMode = false;
+  CANVAS.stagedOriginal = null;
+  saveHistory(); drawCanvas();
+  hideEditingIndicator();
+  toast('✔ Salvat pe schiță','success');
+}
+
+function revertStagedChanges() {
+  if (!CANVAS.selected || !CANVAS.stagedOriginal) return;
+  const orig = JSON.parse(CANVAS.stagedOriginal);
+  Object.assign(CANVAS.selected, orig);
+  CANVAS.editMode = false;
+  CANVAS.stagedOriginal = null;
+  hideEditingIndicator();
+  drawCanvas();
+}
+
+function showEditingIndicator() {
+  let ind = document.getElementById('editing-indicator');
+  if (!ind) {
+    ind = document.createElement('div');
+    ind.id = 'editing-indicator';
+    ind.style.cssText = `position:fixed;top:60px;left:50%;transform:translateX(-50%);
+      background:var(--accent);color:var(--bg-0);padding:6px 16px;border-radius:20px;
+      font-family:var(--font-main);font-size:13px;font-weight:700;z-index:999;
+      display:flex;gap:10px;align-items:center;box-shadow:0 4px 20px rgba(0,0,0,0.4);`;
+    ind.innerHTML = `⚠️ Modificări nesalvate &nbsp;
+      <button onclick="applyProps()" style="background:var(--bg-0);color:var(--accent);border:none;padding:3px 10px;border-radius:12px;font-weight:700;cursor:pointer;font-size:12px;">✔ Aplică</button>
+      <button onclick="revertStagedChanges()" style="background:rgba(0,0,0,0.2);color:var(--bg-0);border:none;padding:3px 10px;border-radius:12px;cursor:pointer;font-size:12px;">✕ Anulează</button>`;
+    document.body.appendChild(ind);
+  }
+  ind.style.display = 'flex';
+}
+
+function hideEditingIndicator() {
+  const ind = document.getElementById('editing-indicator');
+  if (ind) ind.style.display = 'none';
 }
 
 // Sync props panel → obiect live (fără saveHistory)
@@ -682,8 +770,11 @@ function saveMobilePanel() {
   o.note = document.getElementById('mop-note').value;
   o.rotation = +document.getElementById('mop-rotation').value||0;
   o.scale = +document.getElementById('mop-scale').value/100;
+  CANVAS.editMode = false;
+  CANVAS.stagedOriginal = null;
   saveHistory(); drawCanvas();
   closeMobilePanel();
+  hideEditingIndicator();
   toast('✔ Salvat pe schiță','success');
 }
 
@@ -697,21 +788,27 @@ function deleteMobileObj() {
 function rotateObj(deg) {
   if (!CANVAS.selected) return;
   CANVAS.selected.rotation = (((CANVAS.selected.rotation||0)+deg)%360+360)%360;
+  CANVAS.editMode = true;
   syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
   drawCanvas();
 }
 
 function liveRotate(val) {
   if (!CANVAS.selected) return;
   CANVAS.selected.rotation = +val;
+  CANVAS.editMode = true;
   document.getElementById('mop-rot-val').textContent = Math.round(+val)+'°';
+  showEditingIndicator();
   drawCanvas();
 }
 
 function liveScale(val) {
   if (!CANVAS.selected) return;
   CANVAS.selected.scale = +val/100;
+  CANVAS.editMode = true;
   document.getElementById('mop-scale-val').textContent = Math.round(+val)+'%';
+  showEditingIndicator();
   drawCanvas();
 }
 
@@ -719,7 +816,9 @@ function scaleObj(factor) {
   if (!CANVAS.selected) return;
   const ns = Math.max(0.2, Math.min(5, (CANVAS.selected.scale||1)*factor));
   CANVAS.selected.scale = ns;
+  CANVAS.editMode = true;
   syncPropsToObject(CANVAS.selected);
+  showEditingIndicator();
   drawCanvas();
 }
 
