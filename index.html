@@ -154,19 +154,19 @@
         <div class="props-title">Proprietăți Obiect</div>
         <div id="props-empty" class="props-empty">
           <div class="props-empty-icon">◎</div>
-          <p>Selectați un obiect pentru editare</p>
+          <p>Selectează un obiect</p>
         </div>
         <div id="props-form" class="hidden">
           <div class="prop-group"><label>Tip</label><span id="prop-type-display" style="font-size:12px;color:var(--accent)">—</span></div>
-          <div class="prop-group"><label>Etichetă / Nr. înmatriculare</label><input type="text" id="prop-label" placeholder="ex: B 123 ABC"></div>
+          <div class="prop-group"><label>Nr. înmatriculare / Etichetă</label><input type="text" id="prop-label" placeholder="ex: B 123 ABC"></div>
           <div class="prop-group"><label>Rotație (grade)</label><input type="number" id="prop-rotation" min="0" max="360" value="0"></div>
-          <div class="prop-group"><label>Dimensiune <span id="prop-scale-val">100%</span></label><input type="range" id="prop-scale" min="30" max="400" value="100"></div>
-          <div class="prop-group"><label>Culoare highlight</label><input type="color" id="prop-color" value="#e74c3c"></div>
-          <div class="prop-group"><label>Notă obiect</label><textarea id="prop-note" rows="3" placeholder="Notă specifică..."></textarea></div>
-          <div class="prop-group"><label>Legătură persoană</label><select id="prop-person-link"><option value="">— nelegat —</option></select></div>
+          <div class="prop-group"><label>Dimensiune <span id="prop-scale-val">100%</span></label><input type="range" id="prop-scale" min="20" max="500" value="100"></div>
+          <div class="prop-group"><label>Culoare</label><input type="color" id="prop-color" value="#e74c3c"></div>
+          <div class="prop-group"><label>Notă</label><textarea id="prop-note" rows="2" placeholder="Notă..."></textarea></div>
+          <div class="prop-group"><label>Persoană</label><select id="prop-person-link"><option value="">— nelegat —</option></select></div>
           <div class="prop-actions">
-            <button class="pab pab-apply" id="btn-prop-apply">Aplică</button>
-            <button class="pab pab-delete" id="btn-prop-delete">Șterge</button>
+            <button class="pab pab-apply" id="btn-prop-apply">✔ Salvează</button>
+            <button class="pab pab-delete" id="btn-prop-delete">🗑 Șterge</button>
           </div>
         </div>
         <div class="measurements-box">
@@ -175,6 +175,49 @@
           <button class="add-measure-btn" id="btn-add-measure">+ Adaugă măsurătoare</button>
         </div>
       </aside>
+
+      <!-- PANOU MOBIL EDITARE OBIECT (apare pe tabletă/telefon) -->
+      <div id="mobile-obj-panel" class="mobile-obj-panel hidden">
+        <div class="mop-header">
+          <span id="mop-title">Obiect</span>
+          <button id="mop-close" onclick="closeMobilePanel()">✕</button>
+        </div>
+        <div class="mop-body">
+          <div class="mop-emoji" id="mop-emoji">🚗</div>
+          <div class="mop-row">
+            <label>Nr. înmatriculare</label>
+            <input type="text" id="mop-label" placeholder="B 123 ABC">
+          </div>
+          <div class="mop-row">
+            <label>Rotație: <b id="mop-rot-val">0°</b></label>
+            <div class="mop-rot-btns">
+              <button onclick="rotateObj(-45)">↺ 45°</button>
+              <button onclick="rotateObj(-15)">↺ 15°</button>
+              <button onclick="rotateObj(-5)">↺ 5°</button>
+              <button onclick="rotateObj(5)">↻ 5°</button>
+              <button onclick="rotateObj(15)">↻ 15°</button>
+              <button onclick="rotateObj(45)">↻ 45°</button>
+            </div>
+            <input type="range" id="mop-rotation" min="0" max="360" value="0" oninput="liveRotate(this.value)">
+          </div>
+          <div class="mop-row">
+            <label>Dimensiune: <b id="mop-scale-val">100%</b></label>
+            <div class="mop-scale-btns">
+              <button onclick="scaleObj(0.7)">− Mic</button>
+              <button onclick="scaleObj(1/0.7)">+ Mare</button>
+            </div>
+            <input type="range" id="mop-scale" min="20" max="500" value="100" oninput="liveScale(this.value)">
+          </div>
+          <div class="mop-row">
+            <label>Notă</label>
+            <input type="text" id="mop-note" placeholder="observații...">
+          </div>
+        </div>
+        <div class="mop-footer">
+          <button class="mop-btn-save" onclick="saveMobilePanel()">✔ Aplică și închide</button>
+          <button class="mop-btn-del" onclick="deleteMobileObj()">🗑 Șterge</button>
+        </div>
+      </div>
     </div>
   </div>
 
