@@ -27,6 +27,7 @@ const CANVAS = {
   panning: false, panStart: { x: 0, y: 0 },
   history: [], historyIdx: -1,
   tempLine: null,
+  draggingHandle: null, handleStart: null,
 };
 
 const ITEM_MAP = {
@@ -224,12 +225,36 @@ function onPointerDown(e) {
     CANVAS.panStart = { x: e.offsetX - CANVAS.panX, y: e.offsetY - CANVAS.panY }; return;
   }
   if (CANVAS.tool === 'select') {
+    const sel = CANVAS.selected;
+    // Check handle-uri pe obiectul deja selectat
+    if (sel && sel._hRot && sel._hSc) {
+      const rot = sel._hRot, sc = sel._hSc;
+      const hr = 10/CANVAS.zoom, hs = 10/CANVAS.zoom;
+      if (Math.hypot(wx-rot.x, wy-rot.y) < hr) {
+        // Drag handle ROTIRE
+        CANVAS.draggingHandle = 'rotate';
+        CANVAS.handleStart = { wx, wy, rot: sel.rotation||0, cx: sel._cx, cy: sel._cy };
+        CANVAS.drawing = true; return;
+      }
+      if (Math.abs(wx-sc.x)<hs && Math.abs(wy-sc.y)<hs) {
+        // Drag handle SCALE
+        CANVAS.draggingHandle = 'scale';
+        const scv = sel.scale||1;
+        CANVAS.handleStart = { wx, wy, scale: scv, dist: Math.hypot(wx-sel._cx, wy-sel._cy)||1 };
+        CANVAS.drawing = true; return;
+      }
+    }
+    CANVAS.draggingHandle = null;
     const hit = hitTest(wx, wy);
-    if (hit) {
+    if (hit && hit.type !== 'road_poly' && hit.type !== 'roundabout' && hit.type !== 'building_poly') {
       CANVAS.selected = hit;
       hit._dox = wx - hit.x; hit._doy = wy - hit.y; hit._drag = true;
       showPropsFor(hit);
-    } else { CANVAS.selected = null; clearProps(); }
+      openMobilePanel(hit);
+    } else if (hit && (hit.type === 'road_poly' || hit.type === 'roundabout' || hit.type === 'building_poly')) {
+      // Click pe fond OSM — deselect
+      CANVAS.selected = null; clearProps(); closeMobilePanel();
+    } else { CANVAS.selected = null; clearProps(); closeMobilePanel(); }
     CANVAS.drawing = true; drawCanvas(); return;
   }
   if (CANVAS.tool === 'spawn') {
@@ -262,6 +287,24 @@ function onPointerDown(e) {
 function onPointerMove(e) {
   const { wx, wy } = s2w(e.offsetX, e.offsetY);
   if (CANVAS.panning) { CANVAS.panX = e.offsetX - CANVAS.panStart.x; CANVAS.panY = e.offsetY - CANVAS.panStart.y; drawCanvas(); return; }
+  // Handle ROTIRE
+  if (CANVAS.draggingHandle === 'rotate' && CANVAS.selected) {
+    const { cx, cy, rot: startRot } = CANVAS.handleStart;
+    const angle = Math.atan2(wy - cy, wx - cx) * 180 / Math.PI + 90;
+    CANVAS.selected.rotation = ((angle % 360) + 360) % 360;
+    syncPropsToObject(CANVAS.selected);
+    drawCanvas(); return;
+  }
+  // Handle SCALE
+  if (CANVAS.draggingHandle === 'scale' && CANVAS.selected) {
+    const { scale: startScale, dist: startDist } = CANVAS.handleStart;
+    const cx = CANVAS.selected._cx||CANVAS.selected.x, cy = CANVAS.selected._cy||CANVAS.selected.y;
+    const newDist = Math.hypot(wx-cx, wy-cy)||1;
+    const ns = Math.max(0.2, Math.min(5, startScale * newDist / startDist));
+    CANVAS.selected.scale = ns;
+    syncPropsToObject(CANVAS.selected);
+    drawCanvas(); return;
+  }
   if (CANVAS.tool === 'select' && CANVAS.drawing && CANVAS.selected?._drag) {
     CANVAS.selected.x = wx - CANVAS.selected._dox; CANVAS.selected.y = wy - CANVAS.selected._doy; drawCanvas(); return;
   }
@@ -272,6 +315,7 @@ function onPointerMove(e) {
 
 function onPointerUp(e) {
   if (CANVAS.panning) { CANVAS.panning = false; return; }
+  if (CANVAS.draggingHandle) { CANVAS.draggingHandle = null; CANVAS.drawing = false; saveHistory(); return; }
   if (CANVAS.tool === 'select' && CANVAS.selected?._drag) { CANVAS.selected._drag = false; CANVAS.drawing = false; saveHistory(); return; }
   if (CANVAS.tool === 'line' && CANVAS.drawing) {
     if (CANVAS.tempLine) {
@@ -428,13 +472,36 @@ function drawTempLine(ctx) {
 }
 
 function drawSelection(ctx, o) {
-  ctx.save(); ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom; ctx.setLineDash([4/CANVAS.zoom,3/CANVAS.zoom]);
-  const pad = 6/CANVAS.zoom;
+  ctx.save();
+  const pad = 8/CANVAS.zoom;
   if (o.type === 'line') {
+    ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom; ctx.setLineDash([4/CANVAS.zoom,3/CANVAS.zoom]);
     ctx.strokeRect(Math.min(o.x,o.x2)-pad, Math.min(o.y,o.y2)-pad, Math.abs(o.x2-o.x)+pad*2, Math.abs(o.y2-o.y)+pad*2);
-  } else {
+    ctx.setLineDash([]);
+  } else if (o.type !== 'road_poly' && o.type !== 'roundabout' && o.type !== 'building_poly') {
     const sc = o.scale||1;
-    ctx.strokeRect(o.x-pad, o.y-pad, o.w*sc+pad*2, o.h*sc+pad*2);
+    const bx = o.x-pad, by = o.y-pad, bw = o.w*sc+pad*2, bh = o.h*sc+pad*2;
+    const cx = o.x+o.w*sc/2, cy = o.y+o.h*sc/2;
+    // Rotire aplicată și pe selection box
+    ctx.translate(cx,cy); ctx.rotate((o.rotation||0)*Math.PI/180); ctx.translate(-cx,-cy);
+    // Chenar selectie
+    ctx.strokeStyle = '#00c8ff'; ctx.lineWidth = 2/CANVAS.zoom; ctx.setLineDash([4/CANVAS.zoom,3/CANVAS.zoom]);
+    ctx.strokeRect(bx,by,bw,bh); ctx.setLineDash([]);
+    // Handle rotire (sus-centru) — cerc portocaliu
+    const hRot = { x: cx, y: by - 18/CANVAS.zoom };
+    ctx.beginPath(); ctx.arc(hRot.x, hRot.y, 7/CANVAS.zoom, 0, Math.PI*2);
+    ctx.fillStyle = '#ff8800'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5/CANVAS.zoom; ctx.stroke();
+    // Linie de la chenar la handle rotire
+    ctx.beginPath(); ctx.moveTo(cx,by); ctx.lineTo(hRot.x,hRot.y);
+    ctx.strokeStyle='rgba(255,136,0,0.6)'; ctx.lineWidth=1/CANVAS.zoom; ctx.stroke();
+    // Handle scale (colț dreapta-jos) — pătrat verde
+    const hSc = { x: bx+bw, y: by+bh };
+    ctx.fillStyle = '#00cc44'; ctx.strokeStyle='#fff'; ctx.lineWidth=1.5/CANVAS.zoom;
+    const hs = 8/CANVAS.zoom;
+    ctx.fillRect(hSc.x-hs/2,hSc.y-hs/2,hs,hs); ctx.strokeRect(hSc.x-hs/2,hSc.y-hs/2,hs,hs);
+    // Stochează pozițiile handle-urilor pentru hit test
+    o._hRot = hRot; o._hSc = hSc; o._bx=bx; o._by=by; o._bw=bw; o._bh=bh; o._cx=cx; o._cy=cy;
   }
   ctx.restore();
 }
@@ -517,7 +584,8 @@ function showLabelEditorForObj(o, sx, sy) {
 
 // ===== PROPS =====
 function initProps() {
-  document.getElementById('prop-scale').addEventListener('input', e => { document.getElementById('prop-scale-val').textContent=e.target.value+'%'; });
+  document.getElementById('prop-scale').addEventListener('input', e => { onScaleInput(e.target.value); });
+  document.getElementById('prop-rotation').addEventListener('input', e => { onRotationInput(e.target.value); });
   document.getElementById('btn-prop-apply').addEventListener('click', applyProps);
   document.getElementById('btn-prop-delete').addEventListener('click', () => {
     if (!CANVAS.selected) return;
@@ -548,12 +616,111 @@ function applyProps() {
   if (!CANVAS.selected) return;
   const o=CANVAS.selected;
   o.label=document.getElementById('prop-label').value;
-  o.rotation=+document.getElementById('prop-rotation').value||0;
+  o.rotation=((+document.getElementById('prop-rotation').value)||0);
   o.scale=+document.getElementById('prop-scale').value/100;
   o.color=document.getElementById('prop-color').value;
   o.note=document.getElementById('prop-note').value;
   o.personLink=document.getElementById('prop-person-link').value;
-  saveHistory(); drawCanvas(); toast('Proprietăți aplicate','success');
+  saveHistory(); drawCanvas(); toast('✔ Salvat','success');
+}
+
+// Sync props panel → obiect live (fără saveHistory)
+function syncPropsToObject(o) {
+  const rv = document.getElementById('prop-rotation');
+  const sv = document.getElementById('prop-scale');
+  if (rv) { rv.value = Math.round(o.rotation||0); }
+  if (sv) { sv.value = Math.round((o.scale||1)*100); document.getElementById('prop-scale-val').textContent=Math.round((o.scale||1)*100)+'%'; }
+  // Sync mobile panel
+  const mr = document.getElementById('mop-rotation');
+  const ms = document.getElementById('mop-scale');
+  if (mr) { mr.value = Math.round(o.rotation||0); document.getElementById('mop-rot-val').textContent=Math.round(o.rotation||0)+'°'; }
+  if (ms) { ms.value = Math.round((o.scale||1)*100); document.getElementById('mop-scale-val').textContent=Math.round((o.scale||1)*100)+'%'; }
+}
+
+// Live rotate din slider (desktop)
+function onRotationInput(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.rotation = +val;
+  syncPropsToObject(CANVAS.selected);
+  drawCanvas();
+}
+
+// Live scale din slider (desktop)
+function onScaleInput(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.scale = +val/100;
+  syncPropsToObject(CANVAS.selected);
+  drawCanvas();
+}
+
+// ===== MOBILE PANEL =====
+function openMobilePanel(o) {
+  const panel = document.getElementById('mobile-obj-panel');
+  if (!panel) return;
+  document.getElementById('mop-emoji').textContent = o.emoji||'?';
+  document.getElementById('mop-title').textContent = o.name||o.type;
+  document.getElementById('mop-label').value = o.label||'';
+  document.getElementById('mop-note').value = o.note||'';
+  const rot = Math.round(o.rotation||0);
+  document.getElementById('mop-rotation').value = rot;
+  document.getElementById('mop-rot-val').textContent = rot+'°';
+  const sc = Math.round((o.scale||1)*100);
+  document.getElementById('mop-scale').value = sc;
+  document.getElementById('mop-scale-val').textContent = sc+'%';
+  panel.classList.remove('hidden');
+}
+
+function closeMobilePanel() {
+  const panel = document.getElementById('mobile-obj-panel');
+  if (panel) panel.classList.add('hidden');
+}
+
+function saveMobilePanel() {
+  if (!CANVAS.selected) { closeMobilePanel(); return; }
+  const o = CANVAS.selected;
+  o.label = document.getElementById('mop-label').value;
+  o.note = document.getElementById('mop-note').value;
+  o.rotation = +document.getElementById('mop-rotation').value||0;
+  o.scale = +document.getElementById('mop-scale').value/100;
+  saveHistory(); drawCanvas();
+  closeMobilePanel();
+  toast('✔ Salvat pe schiță','success');
+}
+
+function deleteMobileObj() {
+  if (!CANVAS.selected) { closeMobilePanel(); return; }
+  CANVAS.objects = CANVAS.objects.filter(o=>o!==CANVAS.selected);
+  CANVAS.selected = null; clearProps(); closeMobilePanel();
+  saveHistory(); drawCanvas();
+}
+
+function rotateObj(deg) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.rotation = (((CANVAS.selected.rotation||0)+deg)%360+360)%360;
+  syncPropsToObject(CANVAS.selected);
+  drawCanvas();
+}
+
+function liveRotate(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.rotation = +val;
+  document.getElementById('mop-rot-val').textContent = Math.round(+val)+'°';
+  drawCanvas();
+}
+
+function liveScale(val) {
+  if (!CANVAS.selected) return;
+  CANVAS.selected.scale = +val/100;
+  document.getElementById('mop-scale-val').textContent = Math.round(+val)+'%';
+  drawCanvas();
+}
+
+function scaleObj(factor) {
+  if (!CANVAS.selected) return;
+  const ns = Math.max(0.2, Math.min(5, (CANVAS.selected.scale||1)*factor));
+  CANVAS.selected.scale = ns;
+  syncPropsToObject(CANVAS.selected);
+  drawCanvas();
 }
 
 // ===== MEASUREMENTS =====
