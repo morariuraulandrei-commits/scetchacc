@@ -842,7 +842,7 @@ function exportPDF() {
     doc.setFontSize(16); doc.setFont('helvetica','bold'); doc.setTextColor(232,176,0);
     doc.text('SCHIȚĂ ACCIDENT RUTIER',M,14);
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(150,180,200);
-    doc.text(`Dosar: ${APP.incidentId}   |   ${new Date().toLocaleDateString('ro-RO')}   |   Biroul Rutier Arad`, M, 20);
+    doc.text(`Dosar: ${APP.incidentId}   |   ${new Date().toLocaleDateString('ro-RO')}   |   XMorariu | contact@morariuandreiraul.ro`, M, 20);
     y=30;
   };
   const chk = (n=15) => { if(y+n>H-M){ doc.addPage(); y=M; addHdr(); } };
@@ -956,7 +956,7 @@ function exportPDF() {
     doc.setPage(i);
     doc.setDrawColor(200,200,200); doc.setLineWidth(0.3); doc.line(M,H-28,W-M,H-28);
     doc.setFontSize(7.5); doc.setFont('helvetica','normal'); doc.setTextColor(120,120,120);
-    doc.text(`Pagina ${i} din ${doc.internal.getNumberOfPages()}  |  Dosar: ${APP.incidentId}  |  ScetchACC v2.1 — Biroul Rutier Arad  |  Hartă: OpenStreetMap`,M,H-23);
+    doc.text(`Pagina ${i} din ${doc.internal.getNumberOfPages()}  |  Dosar: ${APP.incidentId}  |  ScetchACC v2.1 — XMorariu | contact@morariuandreiraul.ro  |  Hartă: OpenStreetMap`,M,H-23);
     doc.line(M,H-17,80,H-17); doc.line(W-80,H-17,W-M,H-17);
     doc.text('Lucrător rutier (semnătură)',M,H-13); doc.text('Supervizor (semnătură)',W-80,H-13);
   }
