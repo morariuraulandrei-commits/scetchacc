@@ -1282,7 +1282,7 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
     OSM.canvasOffsetX = CANVAS.width / 2;
     OSM.canvasOffsetY = CANVAS.height / 2;
     // Scale: pixeli per metru — adaptat la raza aleasă
-    OSM.scale = Math.max(1.2, Math.min(6.0, 300 / radiusMeters));
+    OSM.scale = 8.0;  // FIX: 8px per metru → bandă = 28px la zoom 1.0
 
     const newObjs = [];
 
@@ -1369,9 +1369,13 @@ async function generateSketchFromOSM(lat, lng, radiusMeters) {
     CANVAS.objects = CANVAS.objects.filter(o=>!o.osmGenerated);
     CANVAS.objects = [...newObjs, ...CANVAS.objects];
 
-    // Reset zoom la 100% centrat
-    CANVAS.zoom = 1; CANVAS.panX = 0; CANVAS.panY = 0;
-    document.getElementById('canvas-zoom-display').textContent = '100%';
+    // Zoom adaptat: raza să ocupe ~40% din canvas
+    const canvasSize = Math.min(CANVAS.width, CANVAS.height) || 800;
+    const radiusPx = radiusMeters * OSM.scale;
+    const initZoom = Math.min(1.5, Math.max(0.08, (canvasSize * 0.40) / radiusPx));
+    CANVAS.zoom = initZoom;
+    CANVAS.panX = 0; CANVAS.panY = 0;
+    document.getElementById('canvas-zoom-display').textContent = Math.round(initZoom*100)+'%';
 
     saveHistory();
     drawCanvas();
@@ -1412,76 +1416,135 @@ function drawBuildingPoly(ctx, o) {
   ctx.restore();
 }
 
-// ── DRAW ROAD_POLY ──
+
+// ── DRAW ROAD_POLY — Benzi individuale cu marcaje profesionale ──
 function drawRoadPoly(ctx, o) {
-  const { pts, roadWidthPx, lanes, isOneway } = o;
+  const { pts, lanes, isOneway, hw } = o;
   if (!pts || pts.length < 2) return;
+  
+  const LANE_W = 3.5 * OSM.scale;  // 3.5m per bandă în px
+  const SHOULDER = Math.max(0.5, 0.5 * OSM.scale); // bordură/trotuar
+  const totalW = lanes * LANE_W;
+  
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  // Bordură / trotuar
-  ctx.strokeStyle = o.bgColor || '#111';
-  ctx.lineWidth = roadWidthPx + Math.max(3, 4/CANVAS.zoom);
-  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
-  ctx.stroke();
-  // Carosabil
-  ctx.strokeStyle = o.color || '#777';
-  ctx.lineWidth = roadWidthPx;
-  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
-  ctx.stroke();
-  // Linie axă (dacă dublu sens)
-  if (lanes >= 2 && !isOneway) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
-    ctx.lineWidth = Math.max(0.4, 0.8/CANVAS.zoom);
-    ctx.setLineDash([7/CANVAS.zoom,6/CANVAS.zoom]);
-    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.stroke(); ctx.setLineDash([]);
-  }
-  // Linii benzi suplimentare
-  if (lanes > 2) {
-    const lw = roadWidthPx / lanes;
-    for (let li=1; li<lanes; li++) {
-      const off = (li/lanes - 0.5) * roadWidthPx;
-      _drawOffsetPolyline(ctx, pts, off, 'rgba(255,255,255,0.2)',
-        Math.max(0.3,0.5/CANVAS.zoom), [4/CANVAS.zoom,8/CANVAS.zoom]);
+  
+  // ── 1. TROTUAR / FUNDAL ──
+  ctx.strokeStyle = '#1a1a1a';
+  ctx.lineWidth = totalW + SHOULDER * 2 + 2/CANVAS.zoom;
+  _polyline(ctx, pts); ctx.stroke();
+  
+  // ── 2. CAROSABIL (asfalt) ──
+  ctx.strokeStyle = o.color || '#444';
+  ctx.lineWidth = totalW;
+  _polyline(ctx, pts); ctx.stroke();
+  
+  // ── 3. BENZI INDIVIDUALE ──
+  for (let li = 0; li < lanes; li++) {
+    // Offset față de centrul drumului
+    const offset = (li - (lanes - 1) / 2) * LANE_W;
+    
+    // Fundal ușor diferit per bandă (alternat)
+    if (li % 2 === 0) {
+      _drawOffsetPolyline(ctx, pts, offset, 'rgba(255,255,255,0.03)',
+        LANE_W - 0.5/CANVAS.zoom, []);
     }
   }
-  // Săgeată sens unic
-  if (isOneway && pts.length >= 2 && roadWidthPx > 4) {
-    const mid = Math.floor(pts.length/2);
-    const p1 = pts[mid-1], p2 = pts[mid];
-    const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
-    const angle=Math.atan2(p2.y-p1.y,p2.x-p1.x);
-    const as=Math.max(4,roadWidthPx*0.4);
-    ctx.save(); ctx.translate(mx,my); ctx.rotate(angle);
-    ctx.fillStyle='rgba(255,255,255,0.55)';
+  
+  // ── 4. MARCAJE BENZI (linii albe/galbene) ──
+  for (let li = 0; li <= lanes; li++) {
+    const offset = (li - lanes/2) * LANE_W;
+    const isEdge = (li === 0 || li === lanes);
+    const isCenter = (!isOneway && li === lanes/2 && lanes % 2 === 0);
+    
+    if (isEdge) {
+      // Linie plină albă pe margini
+      _drawOffsetPolyline(ctx, pts, offset, 'rgba(255,255,255,0.85)',
+        Math.max(0.8, 1.2/CANVAS.zoom), []);
+    } else if (isCenter) {
+      // Linie galbenă continuă pe axul central (sens dublu)
+      _drawOffsetPolyline(ctx, pts, offset, '#ffdd00',
+        Math.max(0.8, 1.5/CANVAS.zoom), []);
+    } else {
+      // Linie întreruptă albă între benzi
+      const dashLen = Math.max(4, 8 * OSM.scale);
+      const gapLen  = Math.max(4, 8 * OSM.scale);
+      _drawOffsetPolyline(ctx, pts, offset, 'rgba(255,255,255,0.65)',
+        Math.max(0.6, 1.0/CANVAS.zoom), [dashLen, gapLen]);
+    }
+  }
+  
+  // ── 5. NUMERELE BENZILOR (vizibil la zoom > 1.5) ──
+  if (lanes > 1 && CANVAS.zoom > 0.8 && LANE_W * CANVAS.zoom > 12) {
+    for (let li = 0; li < lanes; li++) {
+      const offset = (li - (lanes - 1) / 2) * LANE_W;
+      // Punct de mijloc al segmentului
+      const midIdx = Math.floor(pts.length / 2);
+      const p1 = pts[Math.max(0, midIdx-1)], p2 = pts[midIdx];
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+      // Offset perpendicular
+      const nx = -Math.sin(angle), ny = Math.cos(angle);
+      const bx = mx + nx * offset, by = my + ny * offset;
+      
+      ctx.save();
+      ctx.translate(bx, by); ctx.rotate(angle);
+      const fs = Math.max(5, Math.min(LANE_W * 0.4, 14/CANVAS.zoom));
+      ctx.font = `bold ${fs}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      // Numărăm benzile de la dreapta (sens normal trafic)
+      const laneNum = isOneway ? (li + 1) : (lanes - li);
+      ctx.fillText(laneNum, 0, 0);
+      ctx.restore();
+    }
+  }
+  
+  // ── 6. SĂGEATĂ SENS UNIC ──
+  if (isOneway && LANE_W * CANVAS.zoom > 6) {
+    const midIdx = Math.floor(pts.length / 2);
+    const p1 = pts[Math.max(0, midIdx-1)], p2 = pts[midIdx];
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const al = Math.max(5, totalW * 0.35);
+    ctx.save(); ctx.translate(mx, my); ctx.rotate(angle);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.beginPath();
-    ctx.moveTo(as,0); ctx.lineTo(-as*0.6,as*0.5); ctx.lineTo(-as*0.6,-as*0.5);
+    ctx.moveTo(al, 0); ctx.lineTo(-al*0.6, al*0.5); ctx.lineTo(-al*0.6, -al*0.5);
     ctx.closePath(); ctx.fill();
     ctx.restore();
   }
-  // Denumire stradă
-  if (o.name && roadWidthPx > 6) {
-    const mid = Math.floor(pts.length/2);
-    const p1=pts[Math.max(0,mid-1)], p2=pts[mid];
-    const mx=(p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
-    const angle=Math.atan2(p2.y-p1.y,p2.x-p1.x);
-    ctx.save(); ctx.translate(mx,my); ctx.rotate(angle);
-    const fs=Math.max(4,Math.min(13,roadWidthPx*0.32));
-    ctx.font=`${fs}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='rgba(255,255,255,0.55)';
-    ctx.fillText(o.name,0,0);
+  
+  // ── 7. TRECERE DE PIETONI (dacă e marcat în OSM) ──
+  // (se desenează separat ca node)
+  
+  // ── 8. DENUMIRE STRADĂ ──
+  if (o.name && LANE_W * CANVAS.zoom > 8) {
+    const midIdx = Math.floor(pts.length / 2);
+    const p1 = pts[Math.max(0, midIdx-1)], p2 = pts[midIdx];
+    const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    ctx.save(); ctx.translate(mx, my); ctx.rotate(angle);
+    const fs = Math.max(5, Math.min(LANE_W * 0.3, 13/CANVAS.zoom));
+    ctx.font = `${fs}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,220,100,0.8)';
+    ctx.fillText(o.name, 0, -(totalW/2 + 4/CANVAS.zoom));
     ctx.restore();
   }
+  
   ctx.restore();
+}
+
+function _polyline(ctx, pts) {
+  ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
 }
 
 function _drawOffsetPolyline(ctx, pts, offset, color, width, dash) {
   if (pts.length<2) return;
   ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=width;
-  if (dash) ctx.setLineDash(dash);
+  if (dash && dash.length > 0) ctx.setLineDash(dash); else ctx.setLineDash([]);
   ctx.beginPath();
   for (let i=0;i<pts.length;i++) {
     let nx=0,ny=0;
@@ -1498,7 +1561,7 @@ function drawRoundabout(ctx, o) {
   const { cx, cy, r, lanes } = o;
   if (!r || r < 2) return;
   ctx.save();
-  const lw = Math.max(3, r * 0.28 / Math.max(1,lanes));
+  const lw = Math.max(3.5 * OSM.scale, r * 0.28 / Math.max(1,lanes));
   // Insula centrală verde
   ctx.beginPath(); ctx.arc(cx,cy,r-lw*lanes-1,0,Math.PI*2);
   ctx.fillStyle='#1a2a1a'; ctx.fill();
