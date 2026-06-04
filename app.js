@@ -3164,56 +3164,68 @@ function scanStartGPS() {
 
 window.scanActivateGPS = function() {
   var el = document.getElementById('sScanGPSInfo');
-  if (el) el.innerHTML = '<span style="color:#546e7a">&#x23F3; Se obtine locatia...</span>';
-  
+  if (el) el.innerHTML = '<span style="color:#4fc3f7">&#x23F3; Se obtine locatia GPS...</span>';
+
   if (!navigator.geolocation) {
-    if (el) el.innerHTML = '<span style="color:#ff9800">&#x26A0; GPS indisponibil</span>';
+    if (el) el.innerHTML = '<span style="color:#546e7a">-- Geolocation API indisponibila --</span>';
     return;
   }
 
-  /* getCurrentPosition prima data — iOS cere permisiunea la primul apel dintr-un gesture */
+  /* iOS Safari: folosim lowAccuracy PRIMUL apel ca sa obtinem permisiunea rapid */
+  /* Dupa acord, trecem la highAccuracy */
   navigator.geolocation.getCurrentPosition(
     function(pos) {
       SS_GPS.lat = pos.coords.latitude;
       SS_GPS.lng = pos.coords.longitude;
       SS_GPS.acc = pos.coords.accuracy;
-      if (el) {
-        el.innerHTML = 
-          '<span style="color:#4caf50">&#x2022; GPS activ</span><br>' +
-          '<span style="font-size:9px;color:#90caf9;">' + pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6) + '</span><br>' +
-          '<span style="font-size:9px;color:#546e7a;">Precizie: ' + pos.coords.accuracy.toFixed(0) + 'm</span>';
-      }
-      scanToastS('GPS activat!', 'ok');
-      /* Porneste watch dupa primul succes */
+      scanUpdateGPSDisplay(el, pos.coords);
+      scanToastS('GPS activat! Precizie: ' + pos.coords.accuracy.toFixed(0) + 'm', 'ok');
+      /* Watch continuu */
       if (SS_GPS.watchId) navigator.geolocation.clearWatch(SS_GPS.watchId);
       SS_GPS.watchId = navigator.geolocation.watchPosition(
         function(p) {
           SS_GPS.lat = p.coords.latitude;
           SS_GPS.lng = p.coords.longitude;
           SS_GPS.acc = p.coords.accuracy;
-          if (el) {
-            el.innerHTML =
-              '<span style="color:#4caf50">&#x2022; GPS activ</span><br>' +
-              '<span style="font-size:9px;color:#90caf9;">' + p.coords.latitude.toFixed(6) + ', ' + p.coords.longitude.toFixed(6) + '</span><br>' +
-              '<span style="font-size:9px;color:#546e7a;">Precizie: ' + p.coords.accuracy.toFixed(0) + 'm</span>';
-          }
+          scanUpdateGPSDisplay(el, p.coords);
         },
-        function() {},
-        { enableHighAccuracy: true, timeout: 30000, maximumAge: 3000 }
+        function(we) { console.warn('GPS watch err:', we.code, we.message); },
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 }
       );
     },
     function(err) {
-      var msg = err.code === 1 ? 'Acces GPS refuzat — mergi la Setari > Confidentialitate > Localizare > Safari' :
-                err.code === 2 ? 'Locatia este indisponibila momentan' :
-                'Timeout GPS — incearca din nou';
-      if (el) el.innerHTML = 
-        '<span style="color:#ff9800">&#x26A0; ' + msg + '</span><br>' +
-        '<button onclick="scanActivateGPS()" style="margin-top:4px;width:100%;padding:4px;background:#0d1f3a;border:1px solid #f57c00;color:#ff9800;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">Reincearca GPS</button>';
-      scanToastS('GPS: ' + (err.code===1 ? 'acces refuzat' : 'indisponibil'), 'err');
+      console.error('GPS err code:', err.code, 'msg:', err.message);
+      var hints = {
+        1: 'Mergi la: Setari iPhone > Confidentialitate si securitate > Servicii de localizare > Safari > "In timpul utilizarii"',
+        2: 'Semnalul GPS este slab. Iesi afara sau incearca din nou.',
+        3: 'Timeout — Incearca din nou sau verifica semnal GPS.'
+      };
+      var msg = err.code === 1 ? 'Acces refuzat' : err.code === 2 ? 'Locatie indisponibila' : 'Timeout GPS';
+      var hint = hints[err.code] || 'Eroare necunoscuta: ' + err.message;
+      if (el) el.innerHTML =
+        '<div style="color:#ff9800;font-size:10px;margin-bottom:4px;">&#x26A0; ' + msg + '</div>' +
+        '<div style="color:#546e7a;font-size:9px;line-height:1.5;margin-bottom:6px;">' + hint + '</div>' +
+        '<button onclick="scanActivateGPS()" style="width:100%;padding:5px;background:#0d1f3a;border:1px solid #f57c00;color:#ff9800;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x21BA; Reincearca GPS</button>';
     },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
   );
 };
+
+function scanUpdateGPSDisplay(el, coords) {
+  if (!el) return;
+  var acc = coords.accuracy;
+  var accColor = acc < 20 ? '#4caf50' : acc < 100 ? '#ff9800' : '#f44336';
+  el.innerHTML =
+    '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;">' +
+    '<span style="color:#4caf50;font-size:12px;">&#x2022;</span>' +
+    '<span style="color:#4fc3f7;font-size:10px;">GPS Activ</span>' +
+    '<span style="color:' + accColor + ';font-size:9px;margin-left:auto;">&#x25CE; ' + acc.toFixed(0) + 'm</span>' +
+    '</div>' +
+    '<div style="font-size:9px;color:#90caf9;font-family:monospace;">' +
+    coords.latitude.toFixed(6) + '</div>' +
+    '<div style="font-size:9px;color:#90caf9;font-family:monospace;">' +
+    coords.longitude.toFixed(6) + '</div>';
+}
 
 /* ═══════════════════════════════════════════════════
    STATE + CAMERA
@@ -3223,20 +3235,56 @@ var c2,x2;
 
 window.scanStart=async function(){
   try{
-    var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
-    SS.stream=s;SS.camOn=true;
-    var v=document.getElementById('scanVideo');v.srcObject=s;v.play();
-    var cfg=s.getVideoTracks()[0].getSettings();
+    /* iOS Safari: constraints mai simple pentru compatibilitate maxima */
+    var constraints = {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1280, max: 1920 },
+        height: { ideal: 720,  max: 1080 }
+      },
+      audio: false
+    };
+    var s = await navigator.mediaDevices.getUserMedia(constraints);
+    SS.stream = s;
+    SS.camOn = true;
+
+    var v = document.getElementById('scanVideo');
+    v.srcObject = s;
+    v.setAttribute('playsinline', true);
+    v.setAttribute('autoplay', true);
+    v.muted = true;
+
+    /* iOS necesita play() explicit si asteapta loadedmetadata */
+    await new Promise(function(resolve) {
+      v.onloadedmetadata = function() {
+        v.play().then(resolve).catch(resolve);
+      };
+      /* Fallback daca loadedmetadata nu se declanseaza */
+      setTimeout(resolve, 3000);
+    });
+
+    var cfg = s.getVideoTracks()[0].getSettings();
+    var actualW = v.videoWidth || cfg.width || '?';
+    var actualH = v.videoHeight || cfg.height || '?';
+
     document.getElementById('scanCamPlaceholder').style.display='none';
     document.getElementById('scanLine').classList.add('scan-active');
     document.getElementById('scanRecDot').classList.add('scan-active');
     document.getElementById('scanCamTxt').textContent='ACTIV';
-    document.getElementById('scanResInfo').textContent=(cfg.width||'?')+'x'+(cfg.height||'?');
+    document.getElementById('scanResInfo').textContent = actualW + 'x' + actualH;
     document.getElementById('sBtnStart').style.display='none';
     document.getElementById('sBtnCapture').style.display='';
     document.getElementById('sBtnStop').style.display='';
-    scanToastS('Camera activata!','ok');
-  }catch(e){scanToastS(e.name==='NotAllowedError'?'Permisiune refuzata — verifica Setari iOS':e.name==='NotFoundError'?'Nicio camera gasita.':'Eroare camera.','err');}
+    scanToastS('Camera activata! ' + actualW + 'x' + actualH, 'ok');
+  } catch(e) {
+    console.error('Camera error:', e.name, e.message);
+    var msg = e.name === 'NotAllowedError' ?
+      'Permisiune camera refuzata — Setari iPhone > Safari > Camera > Permite' :
+      e.name === 'NotFoundError' ? 'Nicio camera gasita.' :
+      e.name === 'OverconstrainedError' ? 'Camera nu suporta rezolutia ceruta.' :
+      'Eroare camera: ' + e.message;
+    scanToastS(msg, 'err');
+  }
 };
 window.scanStop=function(){
   if(SS.stream)SS.stream.getTracks().forEach(function(t){t.stop();});
@@ -3253,13 +3301,67 @@ window.scanStop=function(){
   scanToastS('Camera oprita.');
 };
 window.scanCapture=function(){
-  var v=document.getElementById('scanVideo');if(!v||!v.srcObject){scanToastS('Porneste camera!','err');return;}
-  var cv=document.getElementById('scanPhotoCanvas');cv.width=v.videoWidth||640;cv.height=v.videoHeight||480;
-  cv.getContext('2d').drawImage(v,0,0);
-  scanAddPhotoS(cv.toDataURL('image/jpeg',0.92),'Captura '+new Date().toLocaleTimeString('ro-RO'));
+  var v=document.getElementById('scanVideo');
+  if(!v||!v.srcObject){scanToastS('Porneste camera inainte de a face poza!','err');return;}
+
+  /* iOS Safari: asteapta ca video sa aiba dimensiuni valide */
+  var w = v.videoWidth;
+  var h = v.videoHeight;
+
+  if (!w || !h || w === 0 || h === 0) {
+    scanToastS('Camera se initializeaza... Asteapta 2 secunde si incearca din nou.','err');
+    /* Retry automat dupa 1.5s */
+    setTimeout(function(){ window.scanCapture(); }, 1500);
+    return;
+  }
+
+  var cv = document.getElementById('scanPhotoCanvas');
+  cv.width = w;
+  cv.height = h;
+  var ctx2 = cv.getContext('2d');
+
+  try {
+    ctx2.drawImage(v, 0, 0, w, h);
+    var dataUrl = cv.toDataURL('image/jpeg', 0.92);
+
+    /* Verifica ca imaginea nu e neagra/goala */
+    if (!dataUrl || dataUrl.length < 1000) {
+      scanToastS('Imagine invalida — incearca din nou', 'err');
+      return;
+    }
+
+    var label = 'Captura ' + new Date().toLocaleTimeString('ro-RO');
+    scanAddPhotoS(dataUrl, label);
+    /* Flash vizual */
+    var box = document.getElementById('scanCameraBox');
+    if (box) {
+      box.style.opacity = '0.3';
+      setTimeout(function(){ box.style.opacity = '1'; }, 150);
+    }
+  } catch(e) {
+    scanToastS('Eroare captura: ' + e.message, 'err');
+    console.error('Capture error:', e);
+  }
 };
 window.scanHandleFiles=function(e){Array.from(e.target.files).forEach(function(f){var r=new FileReader();r.onload=function(ev){scanAddPhotoS(ev.target.result,f.name);};r.readAsDataURL(f);});e.target.value='';};
-function scanAddPhotoS(url,lbl){SS.photos.push({id:Date.now(),url:url,lbl:lbl});scanRenderPhotosS();scanToastS('Fotografie adaugata!','ok');}
+function scanAddPhotoS(url,lbl){
+  var photo = {id:Date.now(), url:url, lbl:lbl, ts:new Date().toISOString()};
+  SS.photos.push(photo);
+
+  /* Salveaza in sessionStorage pentru persistenta in sesiunea curenta */
+  try {
+    var stored = JSON.parse(sessionStorage.getItem('scanPhotos') || '[]');
+    stored.push({id:photo.id, lbl:photo.lbl, ts:photo.ts, url:url});
+    sessionStorage.setItem('scanPhotos', JSON.stringify(stored));
+  } catch(e) { console.warn('sessionStorage save failed:', e); }
+
+  scanRenderPhotosS();
+
+  /* Switcha automat pe tab Fotografii sa confirme salvarea */
+  var fotoTab = document.querySelector('.scan-view-tab:nth-child(4)');
+  /* Nu switcham automat, dar dam feedback clar */
+  scanToastS('Fotografie salvata! Total: ' + SS.photos.length + ' poze', 'ok');
+}
 window.scanDelPhoto=function(id){SS.photos=SS.photos.filter(function(p){return p.id!==id;});scanRenderPhotosS();};
 function scanRenderPhotosS(){
   var cnt=SS.photos.length;
@@ -3393,14 +3495,11 @@ window.scanReset=function(){
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('[data-tab="scanare"]').forEach(function(btn){
     btn.addEventListener('click', function(){
-      /* Reinitializeaza tab-ul la click */
       var tab = document.getElementById('tab-scanare');
       if (tab) {
-        /* Daca UI-ul de scanare e deja construit, doar resize */
         if (tab.querySelector('.scan-wrap')) {
           setTimeout(function(){ if(!c2) scan2dInitS(); else scan2dResizeS(); }, 80);
         } else {
-          /* Prima oara sau dupa block — ruleaza detectia */
           window.scanEnterTab();
         }
       }
@@ -3411,6 +3510,18 @@ document.addEventListener('DOMContentLoaded',function(){
     if(tab&&tab.classList.contains('active'))scan2dResizeS();
   });
 });
+
+/* Restaureaza poze din sessionStorage dupa rebuild UI */
+window.scanRestorePhotos = function() {
+  try {
+    var stored = JSON.parse(sessionStorage.getItem('scanPhotos') || '[]');
+    if (stored.length > 0) {
+      SS.photos = stored.map(function(p){ return {id:p.id, url:p.url, lbl:p.lbl}; });
+      scanRenderPhotosS();
+      scanToastS('Restaurate ' + stored.length + ' fotografii din sesiune', 'ok');
+    }
+  } catch(e) { console.warn('Restore photos failed:', e); }
+};
 
 function scanToastS(msg,type){
   var tc=document.getElementById('toast-container');if(!tc)return;
