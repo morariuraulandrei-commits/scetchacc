@@ -2853,7 +2853,7 @@ function buildPermissionsUI() {
     '<div style="font-size:11px;color:#90a4ae;font-family:monospace;max-width:280px;line-height:1.7;">Pentru cartografiere este nevoie de acces la <b style="color:#ffc107">Camera</b> si <b style="color:#ffc107">Locatie GPS</b>.</div>' +
     '<div id="sScanPermStatus" style="width:100%;max-width:280px;background:#0a1628;border:1px solid #1a2f4a;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;">' +
     '<div id="sScanPermCamera" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a2f4a;"><span>&#x1F4F7; Camera</span><span style="color:#546e7a">&#x23F3; asteptare</span></div>' +
-    '<div id="sScanPermGPS" style="display:flex;justify-content:space-between;padding:4px 0;"><span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x23F3; asteptare</span></div>' +
+    '<div id="sScanPermGPS" style="display:flex;justify-content:space-between;padding:4px 0;"><span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">-- se cere dupa camera --</span></div>' +
     '</div>' +
     '<button id="sScanPermBtn" onclick="scanRequestPermissions()" style="padding:12px 24px;background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:12px;border-radius:6px;cursor:pointer;letter-spacing:1px;">&#x1F513; ACORDA PERMISIUNI</button>' +
     '<div style="font-size:10px;color:#37474f;font-family:monospace;">Vei vedea dialogurile de permisiune ale iOS</div>' +
@@ -3108,32 +3108,9 @@ window.scanRequestPermissions = async function() {
     if (camEl) camEl.innerHTML = '<span>&#x1F4F7; Camera</span><span style="color:#f44336">&#x274C; Refuzat</span>';
   }
 
-  /* GPS / Locatie */
-  if (navigator.geolocation) {
-    try {
-      await new Promise(function(resolve, reject){
-        navigator.geolocation.getCurrentPosition(
-          function(pos) {
-            gpsOK = true;
-            SS_GPS.lat = pos.coords.latitude;
-            SS_GPS.lng = pos.coords.longitude;
-            SS_GPS.acc = pos.coords.accuracy;
-            resolve();
-          },
-          function(err) { reject(err); },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-      });
-      var gpsEl = document.getElementById('sScanPermGPS');
-      if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#4caf50">&#x2705; Acordat</span>';
-    } catch(e) {
-      var gpsEl = document.getElementById('sScanPermGPS');
-      if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#ff9800">&#x26A0; ' + (e.code === 1 ? 'Refuzat' : 'Indisponibil') + '</span>';
-    }
-  } else {
-    var gpsEl = document.getElementById('sScanPermGPS');
-    if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x2014; Indisponibil</span>';
-  }
+  /* GPS / Locatie — iOS necesita user gesture direct, nu setTimeout */
+  /* Cerem GPS doar daca camera e OK si doar cu un buton explicit */
+  /* Nu mai cerem GPS automat — il cerem dupa ce userul apasa butonul dedicat */
 
   /* Daca camera e OK, procedem indiferent de GPS */
   if (cameraOK) {
@@ -3170,27 +3147,73 @@ window.scanRequestPermissions = async function() {
 var SS_GPS = { lat: null, lng: null, acc: null, watchId: null };
 
 function scanStartGPS() {
-  if (!navigator.geolocation) return;
-  if (SS_GPS.watchId) navigator.geolocation.clearWatch(SS_GPS.watchId);
-  SS_GPS.watchId = navigator.geolocation.watchPosition(
+  /* Pe iOS Safari GPS necesita user gesture direct */
+  /* Afisam buton dedicat pentru activare GPS */
+  var el = document.getElementById('sScanGPSInfo');
+  if (!navigator.geolocation) {
+    if (el) el.innerHTML = '<span style="color:#546e7a">-- GPS indisponibil pe acest dispozitiv --</span>';
+    return;
+  }
+  if (el) {
+    el.innerHTML = '<button onclick="scanActivateGPS()" style="' +
+      'width:100%;padding:6px;background:#0d1f3a;border:1px solid #1565c0;' +
+      'color:#4fc3f7;font-family:monospace;font-size:10px;border-radius:4px;' +
+      'cursor:pointer;text-align:center;">&#x1F4CD; Activeaza GPS</button>';
+  }
+}
+
+window.scanActivateGPS = function() {
+  var el = document.getElementById('sScanGPSInfo');
+  if (el) el.innerHTML = '<span style="color:#546e7a">&#x23F3; Se obtine locatia...</span>';
+  
+  if (!navigator.geolocation) {
+    if (el) el.innerHTML = '<span style="color:#ff9800">&#x26A0; GPS indisponibil</span>';
+    return;
+  }
+
+  /* getCurrentPosition prima data — iOS cere permisiunea la primul apel dintr-un gesture */
+  navigator.geolocation.getCurrentPosition(
     function(pos) {
       SS_GPS.lat = pos.coords.latitude;
       SS_GPS.lng = pos.coords.longitude;
       SS_GPS.acc = pos.coords.accuracy;
-      var el = document.getElementById('sScanGPSInfo');
       if (el) {
-        el.innerHTML = '<span style="color:#4caf50">&#x2022;</span> ' +
-          pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6) +
-          '<br><span style="color:#546e7a">Precizie: ' + pos.coords.accuracy.toFixed(0) + 'm</span>';
+        el.innerHTML = 
+          '<span style="color:#4caf50">&#x2022; GPS activ</span><br>' +
+          '<span style="font-size:9px;color:#90caf9;">' + pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6) + '</span><br>' +
+          '<span style="font-size:9px;color:#546e7a;">Precizie: ' + pos.coords.accuracy.toFixed(0) + 'm</span>';
       }
+      scanToastS('GPS activat!', 'ok');
+      /* Porneste watch dupa primul succes */
+      if (SS_GPS.watchId) navigator.geolocation.clearWatch(SS_GPS.watchId);
+      SS_GPS.watchId = navigator.geolocation.watchPosition(
+        function(p) {
+          SS_GPS.lat = p.coords.latitude;
+          SS_GPS.lng = p.coords.longitude;
+          SS_GPS.acc = p.coords.accuracy;
+          if (el) {
+            el.innerHTML =
+              '<span style="color:#4caf50">&#x2022; GPS activ</span><br>' +
+              '<span style="font-size:9px;color:#90caf9;">' + p.coords.latitude.toFixed(6) + ', ' + p.coords.longitude.toFixed(6) + '</span><br>' +
+              '<span style="font-size:9px;color:#546e7a;">Precizie: ' + p.coords.accuracy.toFixed(0) + 'm</span>';
+          }
+        },
+        function() {},
+        { enableHighAccuracy: true, timeout: 30000, maximumAge: 3000 }
+      );
     },
     function(err) {
-      var el = document.getElementById('sScanGPSInfo');
-      if (el) el.innerHTML = '<span style="color:#ff9800">&#x26A0; GPS: ' + (err.code===1?'acces refuzat':'indisponibil') + '</span>';
+      var msg = err.code === 1 ? 'Acces GPS refuzat — mergi la Setari > Confidentialitate > Localizare > Safari' :
+                err.code === 2 ? 'Locatia este indisponibila momentan' :
+                'Timeout GPS — incearca din nou';
+      if (el) el.innerHTML = 
+        '<span style="color:#ff9800">&#x26A0; ' + msg + '</span><br>' +
+        '<button onclick="scanActivateGPS()" style="margin-top:4px;width:100%;padding:4px;background:#0d1f3a;border:1px solid #f57c00;color:#ff9800;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">Reincearca GPS</button>';
+      scanToastS('GPS: ' + (err.code===1 ? 'acces refuzat' : 'indisponibil'), 'err');
     },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
   );
-}
+};
 
 /* ═══════════════════════════════════════════════════
    STATE + CAMERA
