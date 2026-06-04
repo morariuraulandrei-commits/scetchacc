@@ -2868,24 +2868,25 @@ function buildScanUI() {
     '<div class="scan-sidebar">' +
     '<div class="scan-sec-title" style="padding:8px;border-bottom:1px solid #1a2f4a;font-size:9px;display:flex;align-items:center;gap:6px;">&#x1F4E1; Cartografiere Vehicul' + deviceInfo + '</div>' +
     '<div class="scan-camera-box" id="scanCameraBox">' +
-    '<video id="scanVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>' +
+    '<video id="scanVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:none;"></video>' +
     '<canvas id="scanPhotoCanvas" style="display:none"></canvas>' +
-    '<div class="scan-cam-placeholder" id="scanCamPlaceholder">' +
-    '<div style="font-size:30px;opacity:0.4">&#x1F4F7;</div>' +
-    '<p>Apasa PORNIRE pentru camera iPhone Pro</p>' +
+    /* Preview ultima poza capturata */
+    '<div id="scanLastPreview" style="width:100%;height:100%;object-fit:cover;display:flex;align-items:center;justify-content:center;background:#050c1a;flex-direction:column;gap:8px;">' +
+    '<div style="font-size:36px;opacity:0.3">&#x1F4F7;</div>' +
+    '<p style="font-size:10px;color:#4fc3f7;opacity:0.6;font-family:monospace;text-align:center;padding:0 12px;margin:0;">Apasa butonul de mai jos pentru a face o poza cu camera iPhone Pro</p>' +
     '</div>' +
     '<div class="scan-cam-overlay">' +
-    '<div class="scan-grid-lines"></div>' +
-    '<div class="scan-scanline" id="scanLine"></div>' +
     '<div class="scan-corners"><span></span></div>' +
     '<div class="scan-cam-hud">' +
-    '<span><span class="scan-rec-dot" id="scanRecDot"></span><span id="scanCamTxt">INACTIV</span></span>' +
-    '<span id="scanResInfo">-</span>' +
+    '<span id="scanCamTxt" style="color:#00e5ff;font-size:9px;font-family:monospace;">GATA</span>' +
+    '<span id="scanResInfo" style="color:#00e5ff;font-size:9px;font-family:monospace;"></span>' +
     '</div></div></div>' +
+    /* Input file cu capture=environment — deschide camera nativa iOS */
+    '<input type="file" id="scanCameraInput" accept="image/*" capture="environment" style="display:none" onchange="scanHandleCamera(event)">' +
+    '<input type="file" id="scanGalleryInput" accept="image/*" multiple style="display:none" onchange="scanHandleGallery(event)">' +
     '<div class="scan-cam-btns">' +
-    '<button class="scan-btn" id="sBtnStart" onclick="scanStart()">&#x25B6; PORNIRE</button>' +
-    '<button class="scan-btn" id="sBtnCapture" onclick="scanCapture()" style="display:none">&#x1F4F7; FOTO</button>' +
-    '<button class="scan-btn scan-btn-danger" id="sBtnStop" onclick="scanStop()" style="display:none">&#x25A0; STOP</button>' +
+    '<button class="scan-btn" style="flex:2;background:#1565c0;border-color:#4fc3f7;color:#fff;" onclick="document.getElementById('scanCameraInput').click()">&#x1F4F7; POZA</button>' +
+    '<button class="scan-btn" onclick="document.getElementById('scanGalleryInput').click()">&#x1F5BC; Galerie</button>' +
     '</div>' +
     '<div class="scan-section">' +
     '<div class="scan-sec-title">&#x1F4CD; GPS Live</div>' +
@@ -2911,7 +2912,7 @@ function buildScanUI() {
     '<div class="scan-sec-title">&#x1F5BC; Fotografii (<span id="sScanPhotoCount">0</span>)</div>' +
     '<div class="scan-photos-mini" id="sScanPhotosMini"></div>' +
     '<input type="file" id="sScanFileInput" accept="image/*" multiple style="display:none" onchange="scanHandleFiles(event)">' +
-    '<button class="scan-btn" style="width:100%;margin-top:6px;box-sizing:border-box" onclick="document.getElementById(\'sScanFileInput\').click()">+ Galerie</button>' +
+    '<button class="scan-btn" style="width:100%;margin-top:6px;box-sizing:border-box" onclick="document.getElementById(\'scanGalleryInput\') ? document.getElementById(\'scanGalleryInput\').click() : document.getElementById(\'sScanFileInput\').click()">&#x1F5BC; Adauga din Galerie</button>' +
     '</div></div>' +
     '<div class="scan-panel-main">' +
     '<div class="scan-view-tabs">' +
@@ -3234,117 +3235,61 @@ function scanUpdateGPSDisplay(el, coords) {
 var SS={stream:null,camOn:false,photos:[],zones:{},sev:'minor',c2d:{tool:'select',objs:[],drawing:false,sx:0,sy:0,cur:null},c3d:{on:false,raf:null}};
 var c2,x2;
 
-window.scanStart=async function(){
-  try{
-    /* iOS Safari: constraints mai simple pentru compatibilitate maxima */
-    var constraints = {
-      video: {
-        facingMode: { ideal: 'environment' },
-        width:  { ideal: 1280, max: 1920 },
-        height: { ideal: 720,  max: 1080 }
-      },
-      audio: false
-    };
-    var s = await navigator.mediaDevices.getUserMedia(constraints);
-    SS.stream = s;
-    SS.camOn = true;
+/* ── Camera nativa iOS via input[capture] ── */
+window.scanHandleCamera = function(e) {
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  e.target.value = ''; /* reset pentru a permite aceeasi poza din nou */
 
-    var v = document.getElementById('scanVideo');
-    v.srcObject = s;
-    v.setAttribute('playsinline', true);
-    v.setAttribute('autoplay', true);
-    v.muted = true;
-
-    /* iOS necesita play() explicit si asteapta loadedmetadata */
-    await new Promise(function(resolve) {
-      v.onloadedmetadata = function() {
-        v.play().then(resolve).catch(resolve);
-      };
-      /* Fallback daca loadedmetadata nu se declanseaza */
-      setTimeout(resolve, 3000);
-    });
-
-    var cfg = s.getVideoTracks()[0].getSettings();
-    var actualW = v.videoWidth || cfg.width || '?';
-    var actualH = v.videoHeight || cfg.height || '?';
-
-    document.getElementById('scanCamPlaceholder').style.display='none';
-    document.getElementById('scanLine').classList.add('scan-active');
-    document.getElementById('scanRecDot').classList.add('scan-active');
-    document.getElementById('scanCamTxt').textContent='ACTIV';
-    document.getElementById('scanResInfo').textContent = actualW + 'x' + actualH;
-    document.getElementById('sBtnStart').style.display='none';
-    document.getElementById('sBtnCapture').style.display='';
-    document.getElementById('sBtnStop').style.display='';
-    scanToastS('Camera activata! ' + actualW + 'x' + actualH, 'ok');
-  } catch(e) {
-    console.error('Camera error:', e.name, e.message);
-    var msg = e.name === 'NotAllowedError' ?
-      'Permisiune camera refuzata — Setari iPhone > Safari > Camera > Permite' :
-      e.name === 'NotFoundError' ? 'Nicio camera gasita.' :
-      e.name === 'OverconstrainedError' ? 'Camera nu suporta rezolutia ceruta.' :
-      'Eroare camera: ' + e.message;
-    scanToastS(msg, 'err');
-  }
-};
-window.scanStop=function(){
-  if(SS.stream)SS.stream.getTracks().forEach(function(t){t.stop();});
-  SS.stream=null;SS.camOn=false;
-  var v=document.getElementById('scanVideo');if(v)v.srcObject=null;
-  document.getElementById('scanCamPlaceholder').style.display='';
-  document.getElementById('scanLine').classList.remove('scan-active');
-  document.getElementById('scanRecDot').classList.remove('scan-active');
-  document.getElementById('scanCamTxt').textContent='INACTIV';
-  document.getElementById('scanResInfo').textContent='-';
-  document.getElementById('sBtnStart').style.display='';
-  document.getElementById('sBtnCapture').style.display='none';
-  document.getElementById('sBtnStop').style.display='none';
-  scanToastS('Camera oprita.');
-};
-window.scanCapture=function(){
-  var v=document.getElementById('scanVideo');
-  if(!v||!v.srcObject){scanToastS('Porneste camera inainte de a face poza!','err');return;}
-
-  /* iOS Safari: asteapta ca video sa aiba dimensiuni valide */
-  var w = v.videoWidth;
-  var h = v.videoHeight;
-
-  if (!w || !h || w === 0 || h === 0) {
-    scanToastS('Camera se initializeaza... Asteapta 2 secunde si incearca din nou.','err');
-    /* Retry automat dupa 1.5s */
-    setTimeout(function(){ window.scanCapture(); }, 1500);
-    return;
-  }
-
-  var cv = document.getElementById('scanPhotoCanvas');
-  cv.width = w;
-  cv.height = h;
-  var ctx2 = cv.getContext('2d');
-
-  try {
-    ctx2.drawImage(v, 0, 0, w, h);
-    var dataUrl = cv.toDataURL('image/jpeg', 0.92);
-
-    /* Verifica ca imaginea nu e neagra/goala */
-    if (!dataUrl || dataUrl.length < 1000) {
-      scanToastS('Imagine invalida — incearca din nou', 'err');
-      return;
-    }
-
-    var label = 'Captura ' + new Date().toLocaleTimeString('ro-RO');
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    var dataUrl = ev.target.result;
+    var label = 'Poza ' + new Date().toLocaleTimeString('ro-RO');
     scanAddPhotoS(dataUrl, label);
-    /* Flash vizual */
-    var box = document.getElementById('scanCameraBox');
-    if (box) {
-      box.style.opacity = '0.3';
-      setTimeout(function(){ box.style.opacity = '1'; }, 150);
+    /* Arata preview ultima poza in camera box */
+    var preview = document.getElementById('scanLastPreview');
+    if (preview) {
+      preview.innerHTML = '<img src="' + dataUrl + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+        '<div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.7);color:#4fc3f7;font-size:9px;font-family:monospace;padding:2px 5px;border-radius:3px;">' +
+        SS.photos.length + ' poze</div>';
+      preview.style.position = 'relative';
     }
-  } catch(e) {
-    scanToastS('Eroare captura: ' + e.message, 'err');
-    console.error('Capture error:', e);
-  }
+    /* Flash */
+    var box = document.getElementById('scanCameraBox');
+    if (box) { box.style.opacity='0.2'; setTimeout(function(){ box.style.opacity='1'; },120); }
+  };
+  reader.readAsDataURL(file);
 };
-window.scanHandleFiles=function(e){Array.from(e.target.files).forEach(function(f){var r=new FileReader();r.onload=function(ev){scanAddPhotoS(ev.target.result,f.name);};r.readAsDataURL(f);});e.target.value='';};
+
+window.scanHandleGallery = function(e) {
+  var files = e.target.files;
+  if (!files || !files.length) return;
+  e.target.value = '';
+  Array.from(files).forEach(function(file) {
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      scanAddPhotoS(ev.target.result, file.name);
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+/* Pastram scanStart/scanStop/scanCapture ca stub-uri pentru compatibilitate */
+window.scanStart = function() {
+  document.getElementById('scanCameraInput') && document.getElementById('scanCameraInput').click();
+};
+window.scanStop = function() {};
+window.scanCapture = function() {
+  document.getElementById('scanCameraInput') && document.getElementById('scanCameraInput').click();
+};
+window.scanHandleFiles=function(e){
+  Array.from(e.target.files).forEach(function(f){
+    var r=new FileReader();
+    r.onload=function(ev){ scanAddPhotoS(ev.target.result, f.name); };
+    r.readAsDataURL(f);
+  });
+  e.target.value='';
+};
 function scanAddPhotoS(url,lbl){
   var photo = {id:Date.now(), url:url, lbl:lbl, ts:new Date().toISOString()};
   SS.photos.push(photo);
