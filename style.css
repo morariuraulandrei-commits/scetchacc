@@ -831,3 +831,68 @@ body {
   }
   .qc-slider { min-width: 70px; }
 }
+
+/* === SCANARE VEHICULE AVARIATE === */
+.scan-wrap{display:flex;height:100%;background:#080f1e;overflow:hidden}
+.scan-sidebar{width:245px;min-width:200px;background:#080f1e;border-right:1px solid #1a2f4a;display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0}
+.scan-panel-main{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#050c1a}
+.scan-camera-box{position:relative;background:#000;aspect-ratio:4/3;overflow:hidden;flex-shrink:0}
+.scan-cam-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050c1a;gap:8px}
+.scan-cam-placeholder p{font-size:10px;color:#4fc3f7;opacity:.6;text-align:center;padding:0 12px;margin:0;font-family:monospace}
+.scan-cam-overlay{position:absolute;inset:0;pointer-events:none}
+.scan-grid-lines{position:absolute;inset:0;background-image:linear-gradient(rgba(0,200,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(0,200,255,.07) 1px,transparent 1px);background-size:20px 20px}
+.scan-scanline{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,#00e5ff,transparent);animation:scanMove 2s linear infinite;opacity:0}
+.scan-scanline.scan-active{opacity:1}
+@keyframes scanMove{0%{top:0%}100%{top:100%}}
+.scan-corners{position:absolute;inset:8px}
+.scan-corners::before,.scan-corners::after,.scan-corners span::before,.scan-corners span::after{content:'';position:absolute;width:14px;height:14px;border-color:#00e5ff;border-style:solid;opacity:.8}
+.scan-corners::before{top:0;left:0;border-width:2px 0 0 2px}
+.scan-corners::after{top:0;right:0;border-width:2px 2px 0 0}
+.scan-corners span::before{bottom:0;left:0;border-width:0 0 2px 2px}
+.scan-corners span::after{bottom:0;right:0;border-width:0 2px 2px 0}
+.scan-cam-hud{position:absolute;bottom:5px;left:5px;right:5px;display:flex;justify-content:space-between;font-size:9px;color:#00e5ff;font-family:monospace}
+.scan-rec-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#f44336;animation:blinkDot 1s infinite;opacity:0;margin-right:4px;vertical-align:middle}
+.scan-rec-dot.scan-active{opacity:1}
+@keyframes blinkDot{0%,100%{opacity:1}50%{opacity:.2}}
+.scan-cam-btns{display:flex;gap:5px;padding:7px}
+.scan-btn{flex:1;padding:6px 4px;border:1px solid #1e3a5f;background:#0d1f3a;color:#90caf9;font-size:10px;font-family:monospace;cursor:pointer;border-radius:4px;transition:all .2s;text-align:center}
+.scan-btn:hover{background:#1565c0;border-color:#4fc3f7;color:#fff}
+.scan-btn-danger{border-color:#c62828!important;color:#ef9a9a!important}
+.scan-btn-danger:hover{background:#c62828!important;color:#fff!important}
+.scan-btn-pdf{border-color:#880e4f!important;color:#f48fb1!important}
+.scan-btn-pdf:hover{background:#880e4f!important;color:#fff!important}
+.scan-section{border-top:1px solid #1a2f4a;padding:8px;flex-shrink:0}
+.scan-sec-title{font-size:9px;color:#546e7a;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:7px;font-weight:700;font-family:monospace}
+.scan-field{margin-bottom:5px}
+.scan-field label{display:block;font-size:9px;color:#546e7a;margin-bottom:2px;text-transform:uppercase;letter-spacing:.8px;font-family:monospace}
+.scan-field input,.scan-field select,.scan-field textarea{width:100%;background:#0a1628;border:1px solid #1e3a5f;color:#c8d8f0;font-size:11px;padding:4px 6px;font-family:monospace;border-radius:3px;box-sizing:border-box;transition:border-color .2s}
+.scan-field input:focus,.scan-field select:focus,.scan-field textarea:focus{outline:none;border-color:#4fc3f7}
+.scan-field select option{background:#0d1f3a}
+.scan-field textarea{resize:vertical;min-height:45px}
+.scan-sev-btns{display:flex;gap:4px;margin-bottom:6px}
+.scan-sev-btn{flex:1;padding:4px;font-size:9px;text-align:center;cursor:pointer;border:1px solid transparent;border-radius:3px;font-family:monospace;transition:all .15s;background:transparent}
+.scan-sev-btn[data-sev=minor]{border-color:#f9a825;color:#ffc107}
+.scan-sev-btn[data-sev=major]{border-color:#e64a19;color:#ff5722}
+.scan-sev-btn[data-sev=total]{border-color:#c62828;color:#f44336}
+.scan-sev-btn.scan-sev-active[data-sev=minor]{background:rgba(255,193,7,.2)}
+.scan-sev-btn.scan-sev-active[data-sev=major]{background:rgba(255,87,34,.2)}
+.scan-sev-btn.scan-sev-active[data-sev=total]{background:rgba(244,67,54,.2)}
+.scan-photos-mini{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px}
+.scan-photo-mini{aspect-ratio:1;background:#0a1628;border:1px solid #1e3a5f;border-radius:3px;overflow:hidden;position:relative;cursor:pointer}
+.scan-photo-mini img{width:100%;height:100%;object-fit:cover}
+.scan-photo-mini-del{position:absolute;top:1px;right:1px;width:13px;height:13px;background:rgba(198,40,40,.9);color:#fff;font-size:9px;border:none;border-radius:50%;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0}
+.scan-photo-mini:hover .scan-photo-mini-del{display:flex}
+.scan-view-tabs{display:flex;border-bottom:1px solid #1a2f4a;flex-shrink:0}
+.scan-view-tab{padding:7px 10px;font-size:10px;color:#546e7a;cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;font-family:monospace;background:none;border-left:none;border-right:none;border-top:none}
+.scan-view-tab:hover{color:#90caf9}
+.scan-view-tab.scan-view-active{color:#4fc3f7;border-bottom-color:#4fc3f7}
+.scan-view-content{display:flex;flex-direction:column;flex:1;min-height:0}
+.scan-view-show{display:flex!important}
+.scan-2d-toolbar{display:flex;gap:4px;padding:5px 7px;border-bottom:1px solid #1a2f4a;flex-shrink:0;flex-wrap:wrap;align-items:center;background:#060d1a}
+.scan-tool-btn{padding:3px 7px;background:#0d1f3a;border:1px solid #1e3a5f;color:#78909c;font-size:9px;cursor:pointer;border-radius:3px;transition:all .15s;font-family:monospace}
+.scan-tool-btn:hover{background:#1a3a5c;color:#90caf9}
+.scan-tool-btn.scan-tool-active{background:#1565c0;border-color:#4fc3f7;color:#fff}
+.scan-2d-status{display:flex;gap:10px;padding:3px 8px;border-top:1px solid #1a2f4a;font-size:9px;color:#37474f;flex-shrink:0;background:#060d1a;font-family:monospace}
+.scan-2d-status b{color:#4fc3f7}
+.scan-export-bar{display:flex;gap:5px;padding:7px;border-top:1px solid #1a2f4a;flex-shrink:0;background:#060d1a}
+@media(max-width:600px){.scan-wrap{flex-direction:column}.scan-sidebar{width:100%;min-width:unset;border-right:none;border-bottom:1px solid #1a2f4a;max-height:48vh}.scan-panel-main{flex:1;min-height:180px}}

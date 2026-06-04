@@ -68,6 +68,9 @@
   <button class="tab-btn" data-tab="tests">
     <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11"/><path d="M5 9H3m18 0h-2M9 14h6"/><path d="M5 19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5H5v5z"/></svg><span>Teste</span>
   </button>
+  <button class="tab-btn" data-tab="scanare">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-8 10-8 10 8 10 8-4 8-10 8-10-8-10-8z"/></svg><span>Scanare</span>
+  </button>
   <button class="tab-btn" data-tab="notes">
     <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Notițe</span>
   </button>
@@ -627,6 +630,130 @@
   </div>
 </div>
 
+  <div class="tab-panel" id="tab-scanare">
+    <div class="scan-wrap">
+      <div class="scan-sidebar">
+        <div class="scan-sec-title" style="padding:8px;border-bottom:1px solid #1a2f4a;font-size:10px;">Cartografiere Vehicul Avariat</div>
+        <div class="scan-camera-box" id="scanCameraBox">
+          <video id="scanVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+          <canvas id="scanPhotoCanvas" style="display:none"></canvas>
+          <div class="scan-cam-placeholder" id="scanCamPlaceholder">
+            <div style="font-size:30px;opacity:0.4">&#x1F4F7;</div>
+            <p>Apasa PORNIRE pentru camera iPhone Pro</p>
+          </div>
+          <div class="scan-cam-overlay">
+            <div class="scan-grid-lines"></div>
+            <div class="scan-scanline" id="scanLine"></div>
+            <div class="scan-corners"><span></span></div>
+            <div class="scan-cam-hud">
+              <span><span class="scan-rec-dot" id="scanRecDot"></span><span id="scanCamTxt">INACTIV</span></span>
+              <span id="scanResInfo">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="scan-cam-btns">
+          <button class="scan-btn" id="sBtnStart" onclick="scanStart()">PORNIRE</button>
+          <button class="scan-btn" id="sBtnCapture" onclick="scanCapture()" style="display:none">FOTO</button>
+          <button class="scan-btn scan-btn-danger" id="sBtnStop" onclick="scanStop()" style="display:none">STOP</button>
+        </div>
+        <div class="scan-section">
+          <div class="scan-sec-title">Date Vehicul</div>
+          <div class="scan-field"><label>Nr. Inmatriculare</label><input type="text" id="sScanPlate" placeholder="AR-00-XYZ" style="text-transform:uppercase"></div>
+          <div class="scan-field"><label>Marca / Model</label><input type="text" id="sScanModel" placeholder="ex: VW Tiguan 2020"></div>
+          <div class="scan-field"><label>Tip</label><select id="sScanType"><option value="autoturism">Autoturism</option><option value="suv">SUV</option><option value="camion">Camion</option><option value="moto">Motocicleta</option><option value="autobuz">Autobuz</option></select></div>
+          <div class="scan-field"><label>Culoare</label><input type="text" id="sScanColor" placeholder="ex: Alb Perlat"></div>
+        </div>
+        <div class="scan-section">
+          <div class="scan-sec-title">Severitate Daune</div>
+          <div class="scan-sev-btns">
+            <button class="scan-sev-btn scan-sev-active" data-sev="minor" onclick="scanSetSev(this,'minor')">Minor</button>
+            <button class="scan-sev-btn" data-sev="major" onclick="scanSetSev(this,'major')">Major</button>
+            <button class="scan-sev-btn" data-sev="total" onclick="scanSetSev(this,'total')">Total</button>
+          </div>
+          <div class="scan-field"><label>Note</label><textarea id="sScanNotes" rows="3" placeholder="Descriere daune..."></textarea></div>
+        </div>
+        <div class="scan-section">
+          <div class="scan-sec-title">Fotografii (<span id="sScanPhotoCount">0</span>)</div>
+          <div class="scan-photos-mini" id="sScanPhotosMini"></div>
+          <input type="file" id="sScanFileInput" accept="image/*" multiple style="display:none" onchange="scanHandleFiles(event)">
+          <button class="scan-btn" style="width:100%;margin-top:6px;box-sizing:border-box" onclick="document.getElementById('sScanFileInput').click()">+ Galerie</button>
+        </div>
+      </div>
+      <div class="scan-panel-main">
+        <div class="scan-view-tabs">
+          <button class="scan-view-tab scan-view-active" onclick="scanView('2d',this)">2D Canvas</button>
+          <button class="scan-view-tab" onclick="scanView('sil',this)">Silueta Daune</button>
+          <button class="scan-view-tab" onclick="scanView('3d',this)">Model 3D</button>
+          <button class="scan-view-tab" onclick="scanView('foto',this)">Fotografii</button>
+        </div>
+        <div id="sView2d" class="scan-view-content scan-view-show">
+          <div class="scan-2d-toolbar">
+            <button class="scan-tool-btn scan-tool-active" onclick="scan2dTool(this,'select')">Sel</button>
+            <button class="scan-tool-btn" onclick="scan2dTool(this,'pen')">Creion</button>
+            <button class="scan-tool-btn" onclick="scan2dTool(this,'line')">Linie</button>
+            <button class="scan-tool-btn" onclick="scan2dTool(this,'rect')">Rect</button>
+            <button class="scan-tool-btn" onclick="scan2dTool(this,'circle')">Cerc</button>
+            <button class="scan-tool-btn" onclick="scan2dTool(this,'measure')">Masura</button>
+            <div style="flex:1"></div>
+            <input type="color" id="sTool2dColor" value="#00e5ff" style="width:24px;height:24px;border:1px solid #1e3a5f;border-radius:3px;cursor:pointer;padding:1px;">
+            <button class="scan-tool-btn" onclick="scan2dUndo()">Undo</button>
+            <button class="scan-tool-btn" onclick="scan2dClear()">Clear</button>
+          </div>
+          <canvas id="sScanCanvas2D" style="flex:1;width:100%;cursor:crosshair;background:#070e1c;display:block;min-height:200px;"></canvas>
+          <div class="scan-2d-status"><span>Cursor: <b id="sScan2dXY">0,0</b></span><span>Obiecte: <b id="sScan2dCount">0</b></span></div>
+        </div>
+        <div id="sViewSil" class="scan-view-content" style="display:none;overflow-y:auto;padding:12px;flex:1;">
+          <div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Click pe zona pentru a marca daune</div>
+          <div style="display:flex;justify-content:center;">
+            <svg width="300" height="190" viewBox="0 0 300 190">
+              <rect x="35" y="55" width="230" height="95" rx="18" fill="#0d1f3a" stroke="#1e3a5f" stroke-width="1.5"/>
+              <rect x="72" y="32" width="156" height="76" rx="12" fill="#091525" stroke="#1e3a5f" stroke-width="1"/>
+              <rect x="82" y="37" width="62" height="42" rx="5" fill="#0a2040" opacity="0.7"/>
+              <rect x="155" y="37" width="62" height="42" rx="5" fill="#0a2040" opacity="0.7"/>
+              <ellipse cx="83" cy="157" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>
+              <ellipse cx="217" cy="157" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>
+              <ellipse cx="83" cy="50" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>
+              <ellipse cx="217" cy="50" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>
+              <rect class="sdmg-zone" id="sdz-fata" data-zone="Fata" x="240" y="54" width="46" height="60" rx="7" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-spate" data-zone="Spate" x="16" y="54" width="46" height="60" rx="7" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-dr" data-zone="Lateral Dreapta" x="45" y="140" width="210" height="30" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-st" data-zone="Lateral Stanga" x="45" y="36" width="210" height="26" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-capota" data-zone="Capota" x="170" y="60" width="68" height="85" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-portbagaj" data-zone="Portbagaj" x="64" y="60" width="68" height="85" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <rect class="sdmg-zone" id="sdz-acop" data-zone="Acoperis" x="88" y="34" width="124" height="42" rx="8" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>
+              <text x="278" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">FATA</text>
+              <text x="22" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">SPATE</text>
+            </svg>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;font-size:10px;color:#78909c;font-family:monospace;">
+            <span style="color:#546e7a">Neatasat</span>
+            <span style="color:#ffc107">Minor</span>
+            <span style="color:#ff5722">Major</span>
+            <span style="color:#f44336">Total</span>
+          </div>
+          <div id="sScanZoneList" style="margin-top:10px;padding:8px;background:#080f1e;border:1px solid #1a2f4a;border-radius:4px;font-size:10px;color:#78909c;font-family:monospace;">-- Nicio zona marcata --</div>
+        </div>
+        <div id="sView3d" class="scan-view-content" style="display:none;flex:1;position:relative;min-height:200px;">
+          <canvas id="sScanCanvas3D" style="width:100%;height:100%;display:block;"></canvas>
+          <div id="sPlaceholder3d" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#37474f;font-family:monospace;">
+            <div style="font-size:44px;opacity:0.3">3D</div>
+            <p style="font-size:11px;text-align:center;max-width:200px;opacity:0.5;">Marcheaza zonele sau captureaza fotografii, apoi genereaza modelul</p>
+            <button class="scan-btn" onclick="scan3dGenerate()" style="padding:8px 16px;">Genereaza Model 3D</button>
+          </div>
+        </div>
+        <div id="sViewFoto" class="scan-view-content" style="display:none;overflow-y:auto;padding:10px;flex:1;">
+          <div style="font-size:10px;color:#546e7a;margin-bottom:8px;font-family:monospace;">FOTOGRAFII -- <span id="sScanFotoCount">0</span> imagini</div>
+          <div id="sScanFotoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;"></div>
+        </div>
+        <div class="scan-export-bar">
+          <button class="scan-btn" onclick="scanExportJSON()">JSON</button>
+          <button class="scan-btn" onclick="scanExport2D()">PNG 2D</button>
+          <button class="scan-btn scan-btn-pdf" onclick="scanExportPDF()">PDF</button>
+          <button class="scan-btn" style="color:#78909c;border-color:#546e7a" onclick="scanReset()">Reset</button>
+        </div>
+      </div>
+    </div>
+  </div>
 <div id="toast-container"></div>
 <script src="app.js"></script>
 </body>
