@@ -2722,11 +2722,482 @@ function initOSMSketch() {
   });
 }
 
+
 /* === SCANARE VEHICULE AVARIATE === */
 (function(){
 'use strict';
+
+/* ═══════════════════════════════════════════════════
+   DETECTIE DISPOZITIV — doar iPhone Pro cu LiDAR
+   ═══════════════════════════════════════════════════ */
+var DEVICE = {
+  isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
+  isAndroid: /Android/.test(navigator.userAgent),
+  isWindows: /Windows/.test(navigator.userAgent),
+  isLinux: /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent),
+  isMac: /Macintosh/.test(navigator.userAgent) && !(/iPad|iPhone/.test(navigator.userAgent)),
+  ua: navigator.userAgent,
+  model: '',
+  hasLiDAR: false,
+  checked: false
+};
+
+/* iPhone Pro models cu LiDAR: 12 Pro+, 13 Pro+, 14 Pro+, 15 Pro+, 16 Pro+ */
+var LIDAR_MODELS = [
+  'iPhone12,3','iPhone12,5',           // 12 Pro, 12 Pro Max
+  'iPhone14,2','iPhone14,3',           // 13 Pro, 13 Pro Max
+  'iPhone15,2','iPhone15,3',           // 14 Pro, 14 Pro Max
+  'iPhone16,2','iPhone16,3',           // 15 Pro, 15 Pro Max
+  'iPhone17,1','iPhone17,2',           // 16 Pro, 16 Pro Max
+  'iPhone18,1','iPhone18,2'            // viitor
+];
+
+/* Detectie model iPhone prin GPU renderer (cel mai fiabil in browser) */
+async function detectiPhone() {
+  if (!DEVICE.isIOS) return false;
+
+  /* Metoda 1: WebGL renderer string */
+  try {
+    var canvas = document.createElement('canvas');
+    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      var ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) {
+        var renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+        var vendor   = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '';
+        DEVICE.gpuRenderer = renderer;
+        /* A17 Pro / A18 Pro = iPhone 15 Pro / 16 Pro */
+        if (/A17 Pro|A18 Pro|A16 Bionic|A15 Bionic/.test(renderer + vendor)) {
+          DEVICE.hasLiDAR = true;
+          DEVICE.model = renderer;
+          return true;
+        }
+      }
+    }
+  } catch(e) {}
+
+  /* Metoda 2: Camera capabilities — LiDAR iPhones suporta depth stream */
+  try {
+    var devices = await navigator.mediaDevices.enumerateDevices();
+    var videoDevices = devices.filter(function(d){ return d.kind === 'videoinput'; });
+    /* iPhone Pro are de obicei 3+ camere */
+    if (videoDevices.length >= 2) {
+      /* Verifica daca suporta constraints avansate de depth/lidar */
+      var supported = navigator.mediaDevices.getSupportedConstraints ? 
+                      navigator.mediaDevices.getSupportedConstraints() : {};
+      DEVICE.videoDeviceCount = videoDevices.length;
+      /* Heuristica: iOS + 3 camere + screen cu rezolutie Pro */
+      var screenW = window.screen.width * window.devicePixelRatio;
+      var screenH = window.screen.height * window.devicePixelRatio;
+      var isProRes = (screenW >= 1179 && screenH >= 2556) || /* 14 Pro / 15 Pro / 16 Pro */
+                    (screenW >= 1290 && screenH >= 2796) ||  /* Pro Max */
+                    (screenW >= 1206 && screenH >= 2622);    /* 15 Pro */
+      if (isProRes && videoDevices.length >= 2) {
+        DEVICE.hasLiDAR = true;
+        DEVICE.model = 'iPhone Pro (detectat prin rezolutie + camere)';
+        return true;
+      }
+    }
+  } catch(e) {}
+
+  /* Metoda 3: User Agent parsing pentru Pro */
+  var ua = navigator.userAgent;
+  /* Nu putem distinge Pro din UA standard, dar incercam */
+  /* Fallback: cerem utilizatorului sa confirme */
+  DEVICE.model = 'iPhone (model necunoscut)';
+  return null; /* null = incert, necesita confirmare */
+}
+
+/* ═══════════════════════════════════════════════════
+   UI GATE — afiseaza mesaj sau permite accesul
+   ═══════════════════════════════════════════════════ */
+function buildBlockedUI(reason, detail) {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:30px;text-align:center;gap:16px;background:#080f1e;">' +
+    '<div style="font-size:56px;">&#x1F6AB;</div>' +
+    '<div style="font-size:16px;font-weight:700;color:#ef9a9a;font-family:monospace;text-transform:uppercase;letter-spacing:2px;">' + reason + '</div>' +
+    '<div style="font-size:12px;color:#546e7a;font-family:monospace;max-width:320px;line-height:1.7;">' + detail + '</div>' +
+    '<div style="margin-top:8px;padding:12px 20px;background:#0d1f3a;border:1px solid #1e3a5f;border-radius:8px;font-size:11px;color:#4fc3f7;font-family:monospace;">' +
+    '&#x1F4F1; Dispozitive compatibile:<br>' +
+    '<span style="color:#90caf9">iPhone 12 Pro / Pro Max<br>' +
+    'iPhone 13 Pro / Pro Max<br>' +
+    'iPhone 14 Pro / Pro Max<br>' +
+    'iPhone 15 Pro / Pro Max<br>' +
+    'iPhone 16 Pro / Pro Max</span></div>' +
+    '<div style="font-size:10px;color:#37474f;font-family:monospace;">Sistem LiDAR necesar pentru cartografiere 3D</div>' +
+    '</div>';
+}
+
+function buildConfirmUI() {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:30px;text-align:center;gap:16px;background:#080f1e;">' +
+    '<div style="font-size:52px;">&#x2753;</div>' +
+    '<div style="font-size:15px;font-weight:700;color:#ffc107;font-family:monospace;text-transform:uppercase;letter-spacing:1px;">Verificare Dispozitiv</div>' +
+    '<div style="font-size:12px;color:#90a4ae;font-family:monospace;max-width:300px;line-height:1.7;">Nu am putut detecta automat modelul tau de iPhone.<br>Aceasta sectiune functioneaza <b style="color:#4fc3f7">doar pe iPhone Pro</b> cu scanner LiDAR.</div>' +
+    '<div style="display:flex;flex-direction:column;gap:8px;width:100%;max-width:250px;">' +
+    '<button onclick="scanConfirmPro(true)" style="padding:12px;background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:12px;border-radius:6px;cursor:pointer;">&#x2705; Da, am iPhone Pro cu LiDAR</button>' +
+    '<button onclick="scanConfirmPro(false)" style="padding:12px;background:#0d1f3a;border:1px solid #546e7a;color:#78909c;font-family:monospace;font-size:12px;border-radius:6px;cursor:pointer;">&#x274C; Nu, alt dispozitiv</button>' +
+    '</div></div>';
+}
+
+function buildLoadingUI() {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;background:#080f1e;">' +
+    '<div style="width:48px;height:48px;border:3px solid #1e3a5f;border-top-color:#4fc3f7;border-radius:50%;animation:spinScan 1s linear infinite;"></div>' +
+    '<div style="font-size:12px;color:#4fc3f7;font-family:monospace;letter-spacing:2px;">DETECTIE DISPOZITIV...</div>' +
+    '<style>@keyframes spinScan{to{transform:rotate(360deg)}}</style>' +
+    '</div>';
+}
+
+function buildPermissionsUI() {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;gap:14px;background:#080f1e;">' +
+    '<div style="font-size:48px;">&#x1F4CD;</div>' +
+    '<div style="font-size:15px;font-weight:700;color:#4fc3f7;font-family:monospace;text-transform:uppercase;letter-spacing:1px;">Permisiuni Necesare</div>' +
+    '<div style="font-size:11px;color:#90a4ae;font-family:monospace;max-width:280px;line-height:1.7;">Pentru cartografiere este nevoie de acces la <b style="color:#ffc107">Camera</b> si <b style="color:#ffc107">Locatie GPS</b>.</div>' +
+    '<div id="sScanPermStatus" style="width:100%;max-width:280px;background:#0a1628;border:1px solid #1a2f4a;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;">' +
+    '<div id="sScanPermCamera" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a2f4a;"><span>&#x1F4F7; Camera</span><span style="color:#546e7a">&#x23F3; asteptare</span></div>' +
+    '<div id="sScanPermGPS" style="display:flex;justify-content:space-between;padding:4px 0;"><span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x23F3; asteptare</span></div>' +
+    '</div>' +
+    '<button id="sScanPermBtn" onclick="scanRequestPermissions()" style="padding:12px 24px;background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:12px;border-radius:6px;cursor:pointer;letter-spacing:1px;">&#x1F513; ACORDA PERMISIUNI</button>' +
+    '<div style="font-size:10px;color:#37474f;font-family:monospace;">Vei vedea dialogurile de permisiune ale iOS</div>' +
+    '</div>';
+}
+
+function buildScanUI() {
+  var deviceInfo = DEVICE.model ? 
+    '<div style="font-size:9px;color:#2e7d32;font-family:monospace;padding:3px 8px;background:rgba(46,125,50,0.15);border:1px solid #2e7d32;border-radius:10px;margin-left:auto;">&#x2705; ' + (DEVICE.model.length > 30 ? 'iPhone Pro LiDAR' : DEVICE.model) + '</div>' : '';
+  
+  return '<div class="scan-wrap" id="sScanUI">' +
+    '<div class="scan-sidebar">' +
+    '<div class="scan-sec-title" style="padding:8px;border-bottom:1px solid #1a2f4a;font-size:9px;display:flex;align-items:center;gap:6px;">&#x1F4E1; Cartografiere Vehicul' + deviceInfo + '</div>' +
+    '<div class="scan-camera-box" id="scanCameraBox">' +
+    '<video id="scanVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;display:block;"></video>' +
+    '<canvas id="scanPhotoCanvas" style="display:none"></canvas>' +
+    '<div class="scan-cam-placeholder" id="scanCamPlaceholder">' +
+    '<div style="font-size:30px;opacity:0.4">&#x1F4F7;</div>' +
+    '<p>Apasa PORNIRE pentru camera iPhone Pro</p>' +
+    '</div>' +
+    '<div class="scan-cam-overlay">' +
+    '<div class="scan-grid-lines"></div>' +
+    '<div class="scan-scanline" id="scanLine"></div>' +
+    '<div class="scan-corners"><span></span></div>' +
+    '<div class="scan-cam-hud">' +
+    '<span><span class="scan-rec-dot" id="scanRecDot"></span><span id="scanCamTxt">INACTIV</span></span>' +
+    '<span id="scanResInfo">-</span>' +
+    '</div></div></div>' +
+    '<div class="scan-cam-btns">' +
+    '<button class="scan-btn" id="sBtnStart" onclick="scanStart()">&#x25B6; PORNIRE</button>' +
+    '<button class="scan-btn" id="sBtnCapture" onclick="scanCapture()" style="display:none">&#x1F4F7; FOTO</button>' +
+    '<button class="scan-btn scan-btn-danger" id="sBtnStop" onclick="scanStop()" style="display:none">&#x25A0; STOP</button>' +
+    '</div>' +
+    '<div class="scan-section">' +
+    '<div class="scan-sec-title">&#x1F4CD; GPS Live</div>' +
+    '<div id="sScanGPSInfo" style="font-size:10px;color:#546e7a;font-family:monospace;padding:4px 0;">-- GPS inactiv --</div>' +
+    '</div>' +
+    '<div class="scan-section">' +
+    '<div class="scan-sec-title">&#x1F697; Date Vehicul</div>' +
+    '<div class="scan-field"><label>Nr. Inmatriculare</label><input type="text" id="sScanPlate" placeholder="AR-00-XYZ" style="text-transform:uppercase"></div>' +
+    '<div class="scan-field"><label>Marca / Model</label><input type="text" id="sScanModel" placeholder="ex: VW Tiguan 2020"></div>' +
+    '<div class="scan-field"><label>Tip</label><select id="sScanType"><option value="autoturism">Autoturism</option><option value="suv">SUV</option><option value="camion">Camion</option><option value="moto">Motocicleta</option><option value="autobuz">Autobuz</option></select></div>' +
+    '<div class="scan-field"><label>Culoare</label><input type="text" id="sScanColor" placeholder="ex: Alb Perlat"></div>' +
+    '</div>' +
+    '<div class="scan-section">' +
+    '<div class="scan-sec-title">&#x26A0; Severitate Daune</div>' +
+    '<div class="scan-sev-btns">' +
+    '<button class="scan-sev-btn scan-sev-active" data-sev="minor" onclick="scanSetSev(this,\'minor\')">Minor</button>' +
+    '<button class="scan-sev-btn" data-sev="major" onclick="scanSetSev(this,\'major\')">Major</button>' +
+    '<button class="scan-sev-btn" data-sev="total" onclick="scanSetSev(this,\'total\')">Total</button>' +
+    '</div>' +
+    '<div class="scan-field"><label>Note</label><textarea id="sScanNotes" rows="3" placeholder="Descriere daune..."></textarea></div>' +
+    '</div>' +
+    '<div class="scan-section">' +
+    '<div class="scan-sec-title">&#x1F5BC; Fotografii (<span id="sScanPhotoCount">0</span>)</div>' +
+    '<div class="scan-photos-mini" id="sScanPhotosMini"></div>' +
+    '<input type="file" id="sScanFileInput" accept="image/*" multiple style="display:none" onchange="scanHandleFiles(event)">' +
+    '<button class="scan-btn" style="width:100%;margin-top:6px;box-sizing:border-box" onclick="document.getElementById(\'sScanFileInput\').click()">+ Galerie</button>' +
+    '</div></div>' +
+    '<div class="scan-panel-main">' +
+    '<div class="scan-view-tabs">' +
+    '<button class="scan-view-tab scan-view-active" onclick="scanView(\'2d\',this)">2D Canvas</button>' +
+    '<button class="scan-view-tab" onclick="scanView(\'sil\',this)">Silueta Daune</button>' +
+    '<button class="scan-view-tab" onclick="scanView(\'3d\',this)">Model 3D</button>' +
+    '<button class="scan-view-tab" onclick="scanView(\'foto\',this)">Fotografii</button>' +
+    '</div>' +
+    '<div id="sView2d" class="scan-view-content scan-view-show">' +
+    '<div class="scan-2d-toolbar">' +
+    '<button class="scan-tool-btn scan-tool-active" onclick="scan2dTool(this,\'select\')">Sel</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dTool(this,\'pen\')">Creion</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dTool(this,\'line\')">Linie</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dTool(this,\'rect\')">Rect</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dTool(this,\'circle\')">Cerc</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dTool(this,\'measure\')">Masura</button>' +
+    '<div style="flex:1"></div>' +
+    '<input type="color" id="sTool2dColor" value="#00e5ff" style="width:24px;height:24px;border:1px solid #1e3a5f;border-radius:3px;cursor:pointer;padding:1px;">' +
+    '<button class="scan-tool-btn" onclick="scan2dUndo()">Undo</button>' +
+    '<button class="scan-tool-btn" onclick="scan2dClear()">Clear</button>' +
+    '</div>' +
+    '<canvas id="sScanCanvas2D" style="flex:1;width:100%;cursor:crosshair;background:#070e1c;display:block;min-height:200px;"></canvas>' +
+    '<div class="scan-2d-status"><span>Cursor: <b id="sScan2dXY">0,0</b></span><span>Obiecte: <b id="sScan2dCount">0</b></span></div>' +
+    '</div>' +
+    '<div id="sViewSil" class="scan-view-content" style="display:none;overflow-y:auto;padding:12px;flex:1;">' +
+    '<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Click pe zona vehiculului pentru a marca daune</div>' +
+    '<div style="display:flex;justify-content:center;">' +
+    '<svg width="300" height="190" viewBox="0 0 300 190">' +
+    '<rect x="35" y="55" width="230" height="95" rx="18" fill="#0d1f3a" stroke="#1e3a5f" stroke-width="1.5"/>' +
+    '<rect x="72" y="32" width="156" height="76" rx="12" fill="#091525" stroke="#1e3a5f" stroke-width="1"/>' +
+    '<rect x="82" y="37" width="62" height="42" rx="5" fill="#0a2040" opacity="0.7"/>' +
+    '<rect x="155" y="37" width="62" height="42" rx="5" fill="#0a2040" opacity="0.7"/>' +
+    '<ellipse cx="83" cy="157" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>' +
+    '<ellipse cx="217" cy="157" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>' +
+    '<ellipse cx="83" cy="50" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>' +
+    '<ellipse cx="217" cy="50" rx="20" ry="13" fill="#060d1a" stroke="#1e3a5f" stroke-width="1.5"/>' +
+    '<rect class="sdmg-zone" id="sdz-fata" data-zone="Fata" x="240" y="54" width="46" height="60" rx="7" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-spate" data-zone="Spate" x="16" y="54" width="46" height="60" rx="7" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-dr" data-zone="Lateral Dreapta" x="45" y="140" width="210" height="30" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-st" data-zone="Lateral Stanga" x="45" y="36" width="210" height="26" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-capota" data-zone="Capota" x="170" y="60" width="68" height="85" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-portbagaj" data-zone="Portbagaj" x="64" y="60" width="68" height="85" rx="6" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<rect class="sdmg-zone" id="sdz-acop" data-zone="Acoperis" x="88" y="34" width="124" height="42" rx="8" onclick="scanMarkZone(this)" fill="rgba(0,229,255,0.05)" stroke="rgba(0,229,255,0.25)" stroke-width="1" style="cursor:pointer"/>' +
+    '<text x="278" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">FATA</text>' +
+    '<text x="22" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">SPATE</text>' +
+    '</svg></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:8px;font-size:10px;color:#78909c;font-family:monospace;">' +
+    '<span style="color:#546e7a">Neatasat</span><span style="color:#ffc107">Minor</span><span style="color:#ff5722">Major</span><span style="color:#f44336">Total</span>' +
+    '</div>' +
+    '<div id="sScanZoneList" style="margin-top:10px;padding:8px;background:#080f1e;border:1px solid #1a2f4a;border-radius:4px;font-size:10px;color:#78909c;font-family:monospace;">-- Nicio zona marcata --</div>' +
+    '</div>' +
+    '<div id="sView3d" class="scan-view-content" style="display:none;flex:1;position:relative;min-height:200px;">' +
+    '<canvas id="sScanCanvas3D" style="width:100%;height:100%;display:block;"></canvas>' +
+    '<div id="sPlaceholder3d" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#37474f;font-family:monospace;">' +
+    '<div style="font-size:44px;opacity:0.3">3D</div>' +
+    '<p style="font-size:11px;text-align:center;max-width:200px;opacity:0.5;">Marcheaza zonele sau captureaza fotografii</p>' +
+    '<button class="scan-btn" onclick="scan3dGenerate()" style="padding:8px 16px;">Genereaza Model 3D</button>' +
+    '</div></div>' +
+    '<div id="sViewFoto" class="scan-view-content" style="display:none;overflow-y:auto;padding:10px;flex:1;">' +
+    '<div style="font-size:10px;color:#546e7a;margin-bottom:8px;font-family:monospace;">FOTOGRAFII -- <span id="sScanFotoCount">0</span> imagini</div>' +
+    '<div id="sScanFotoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;"></div>' +
+    '</div>' +
+    '<div class="scan-export-bar">' +
+    '<button class="scan-btn" onclick="scanExportJSON()">JSON</button>' +
+    '<button class="scan-btn" onclick="scanExport2D()">PNG 2D</button>' +
+    '<button class="scan-btn scan-btn-pdf" onclick="scanExportPDF()">PDF</button>' +
+    '<button class="scan-btn" style="color:#78909c;border-color:#546e7a" onclick="scanReset()">Reset</button>' +
+    '</div></div></div>';
+}
+
+/* ═══════════════════════════════════════════════════
+   INTRARE IN TAB — detectie + permisiuni
+   ═══════════════════════════════════════════════════ */
+var scanInitDone = false;
+var scanPermsDone = false;
+
+window.scanEnterTab = async function() {
+  var wrap = document.getElementById('tab-scanare');
+  if (!wrap) return;
+
+  /* Deja initializat si permisiuni OK */
+  if (scanInitDone && scanPermsDone) {
+    setTimeout(function(){ if(!c2) scan2dInitS(); else scan2dResizeS(); }, 80);
+    return;
+  }
+
+  /* Step 1: loading */
+  wrap.innerHTML = buildLoadingUI();
+  await new Promise(function(r){ setTimeout(r, 400); });
+
+  /* Step 2: verifica platforma */
+  if (DEVICE.isAndroid) {
+    wrap.innerHTML = buildBlockedUI(
+      'Dispozitiv incompatibil',
+      'Ai deschis aceasta sectiune de pe un dispozitiv <b style="color:#ef9a9a">Android</b>.<br><br>Cartografierea 3D cu LiDAR functioneaza <b>exclusiv</b> pe iPhone Pro (12 Pro si mai nou) care sunt echipate cu senzor LiDAR dedicat.'
+    );
+    return;
+  }
+  if (DEVICE.isWindows) {
+    wrap.innerHTML = buildBlockedUI(
+      'Platforma incompatibila',
+      'Aceasta sectiune nu este disponibila pe <b style="color:#ef9a9a">Windows</b>.<br><br>Cartografierea 3D necesita senzorul LiDAR prezent doar pe iPhone Pro. Acceseaza aplicatia de pe iPhone 12 Pro sau mai nou.'
+    );
+    return;
+  }
+  if (DEVICE.isLinux) {
+    wrap.innerHTML = buildBlockedUI(
+      'Platforma incompatibila',
+      'Aceasta sectiune nu este disponibila pe <b style="color:#ef9a9a">Linux</b>.<br><br>LiDAR scanner este disponibil exclusiv pe hardware-ul iPhone Pro. Te rugam sa accesezi de pe iPhone 12 Pro sau mai nou.'
+    );
+    return;
+  }
+  if (DEVICE.isMac) {
+    wrap.innerHTML = buildBlockedUI(
+      'Mac detectat',
+      'Aceasta sectiune nu este disponibila pe <b style="color:#ef9a9a">Mac / macOS</b>.<br><br>Cartografierea LiDAR necesita hardware-ul specializat al iPhone Pro. Acceseaza de pe iPhone 12 Pro sau mai nou.'
+    );
+    return;
+  }
+
+  /* Step 3: iOS detectat — verifica daca e Pro */
+  if (DEVICE.isIOS) {
+    wrap.innerHTML = buildLoadingUI();
+    var proResult = await detectiPhone();
+
+    if (proResult === false) {
+      /* iOS non-Pro sau fara LiDAR */
+      wrap.innerHTML = buildBlockedUI(
+        'iPhone fara LiDAR',
+        'Dispozitivul tau este un <b style="color:#ef9a9a">iPhone non-Pro</b> sau nu are senzor LiDAR.<br><br>Cartografierea 3D necesita senzorul LiDAR prezent incepand de la <b style="color:#4fc3f7">iPhone 12 Pro</b>.'
+      );
+      return;
+    }
+
+    if (proResult === null) {
+      /* Incert — cere confirmare utilizator */
+      wrap.innerHTML = buildConfirmUI();
+      return;
+    }
+
+    /* proResult === true — iPhone Pro confirmat */
+    await scanProceedToPermissions(wrap);
+    return;
+  }
+
+  /* Altceva necunoscut (browser desktop necunoscut) */
+  wrap.innerHTML = buildBlockedUI(
+    'Dispozitiv necunoscut',
+    'Nu am putut detecta dispozitivul tau.<br><br>Aceasta sectiune functioneaza <b>exclusiv</b> pe iPhone Pro (12 Pro, 13 Pro, 14 Pro, 15 Pro, 16 Pro) cu senzor LiDAR.'
+  );
+};
+
+/* Confirmare manuala Pro */
+window.scanConfirmPro = async function(isPro) {
+  var wrap = document.getElementById('tab-scanare');
+  if (!isPro) {
+    wrap.innerHTML = buildBlockedUI(
+      'Acces restrictionat',
+      'Ai confirmat ca nu ai un iPhone Pro.<br><br>Cartografierea 3D cu LiDAR este disponibila exclusiv pe <b style="color:#4fc3f7">iPhone Pro</b> incepand de la modelul 12 Pro.'
+    );
+    return;
+  }
+  DEVICE.hasLiDAR = true;
+  DEVICE.model = 'iPhone Pro (confirmat manual)';
+  await scanProceedToPermissions(wrap);
+};
+
+/* Step: permisiuni */
+async function scanProceedToPermissions(wrap) {
+  wrap.innerHTML = buildPermissionsUI();
+  /* Incepe automat cererea de permisiuni dupa 500ms */
+  setTimeout(function(){ window.scanRequestPermissions(); }, 500);
+}
+
+/* Cerere permisiuni Camera + GPS */
+window.scanRequestPermissions = async function() {
+  var btn = document.getElementById('sScanPermBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Se solicita...'; }
+
+  var cameraOK = false;
+  var gpsOK = false;
+
+  /* Camera */
+  try {
+    var stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    stream.getTracks().forEach(function(t){ t.stop(); }); /* oprim imediat, pornim la nevoie */
+    cameraOK = true;
+    var camEl = document.getElementById('sScanPermCamera');
+    if (camEl) camEl.innerHTML = '<span>&#x1F4F7; Camera</span><span style="color:#4caf50">&#x2705; Acordat</span>';
+  } catch(e) {
+    var camEl = document.getElementById('sScanPermCamera');
+    if (camEl) camEl.innerHTML = '<span>&#x1F4F7; Camera</span><span style="color:#f44336">&#x274C; Refuzat</span>';
+  }
+
+  /* GPS / Locatie */
+  if (navigator.geolocation) {
+    try {
+      await new Promise(function(resolve, reject){
+        navigator.geolocation.getCurrentPosition(
+          function(pos) {
+            gpsOK = true;
+            SS_GPS.lat = pos.coords.latitude;
+            SS_GPS.lng = pos.coords.longitude;
+            SS_GPS.acc = pos.coords.accuracy;
+            resolve();
+          },
+          function(err) { reject(err); },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+      });
+      var gpsEl = document.getElementById('sScanPermGPS');
+      if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#4caf50">&#x2705; Acordat</span>';
+    } catch(e) {
+      var gpsEl = document.getElementById('sScanPermGPS');
+      if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#ff9800">&#x26A0; ' + (e.code === 1 ? 'Refuzat' : 'Indisponibil') + '</span>';
+    }
+  } else {
+    var gpsEl = document.getElementById('sScanPermGPS');
+    if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x2014; Indisponibil</span>';
+  }
+
+  /* Daca camera e OK, procedem indiferent de GPS */
+  if (cameraOK) {
+    scanPermsDone = true;
+    scanInitDone = true;
+    await new Promise(function(r){ setTimeout(r, 800); });
+    var wrap = document.getElementById('tab-scanare');
+    if (wrap) {
+      wrap.innerHTML = buildScanUI();
+      setTimeout(function(){
+        scan2dInitS();
+        scanStartGPS();
+      }, 100);
+    }
+  } else {
+    /* Camera refuzata — afiseaza mesaj */
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Incearca din nou';
+    }
+    var statusEl = document.getElementById('sScanPermStatus');
+    if (statusEl) {
+      statusEl.insertAdjacentHTML('afterend',
+        '<div style="margin-top:10px;padding:8px;background:rgba(244,67,54,0.1);border:1px solid #c62828;border-radius:6px;font-size:10px;color:#ef9a9a;font-family:monospace;">' +
+        '&#x26A0; Camera este necesara. Mergi la Setari iOS > Privacy > Camera si acorda acces pentru acest browser.</div>'
+      );
+    }
+  }
+};
+
+/* ═══════════════════════════════════════════════════
+   GPS LIVE
+   ═══════════════════════════════════════════════════ */
+var SS_GPS = { lat: null, lng: null, acc: null, watchId: null };
+
+function scanStartGPS() {
+  if (!navigator.geolocation) return;
+  if (SS_GPS.watchId) navigator.geolocation.clearWatch(SS_GPS.watchId);
+  SS_GPS.watchId = navigator.geolocation.watchPosition(
+    function(pos) {
+      SS_GPS.lat = pos.coords.latitude;
+      SS_GPS.lng = pos.coords.longitude;
+      SS_GPS.acc = pos.coords.accuracy;
+      var el = document.getElementById('sScanGPSInfo');
+      if (el) {
+        el.innerHTML = '<span style="color:#4caf50">&#x2022;</span> ' +
+          pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6) +
+          '<br><span style="color:#546e7a">Precizie: ' + pos.coords.accuracy.toFixed(0) + 'm</span>';
+      }
+    },
+    function(err) {
+      var el = document.getElementById('sScanGPSInfo');
+      if (el) el.innerHTML = '<span style="color:#ff9800">&#x26A0; GPS: ' + (err.code===1?'acces refuzat':'indisponibil') + '</span>';
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   STATE + CAMERA
+   ═══════════════════════════════════════════════════ */
 var SS={stream:null,camOn:false,photos:[],zones:{},sev:'minor',c2d:{tool:'select',objs:[],drawing:false,sx:0,sy:0,cur:null},c3d:{on:false,raf:null}};
 var c2,x2;
+
 window.scanStart=async function(){
   try{
     var s=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
@@ -2742,7 +3213,7 @@ window.scanStart=async function(){
     document.getElementById('sBtnCapture').style.display='';
     document.getElementById('sBtnStop').style.display='';
     scanToastS('Camera activata!','ok');
-  }catch(e){scanToastS(e.name==='NotAllowedError'?'Permisiune refuzata.':e.name==='NotFoundError'?'Nicio camera gasita.':'Eroare camera.','err');}
+  }catch(e){scanToastS(e.name==='NotAllowedError'?'Permisiune refuzata — verifica Setari iOS':e.name==='NotFoundError'?'Nicio camera gasita.':'Eroare camera.','err');}
 };
 window.scanStop=function(){
   if(SS.stream)SS.stream.getTracks().forEach(function(t){t.stop();});
@@ -2774,7 +3245,7 @@ function scanRenderPhotosS(){
   if(mini){mini.innerHTML='';SS.photos.forEach(function(p){mini.innerHTML+='<div class="scan-photo-mini"><img src="'+p.url+'" alt=""><button class="scan-photo-mini-del" onclick="scanDelPhoto('+p.id+')">x</button></div>';});}
   var grid=document.getElementById('sScanFotoGrid');
   if(grid){
-    grid.innerHTML='<div onclick="document.getElementById('sScanFileInput').click()" style="aspect-ratio:1;border:1px dashed #1e3a5f;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#37474f;font-size:26px;cursor:pointer;">+</div>';
+    grid.innerHTML='<div onclick="document.getElementById(\'sScanFileInput\').click()" style="aspect-ratio:1;border:1px dashed #1e3a5f;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#37474f;font-size:26px;cursor:pointer;">+</div>';
     SS.photos.forEach(function(p){grid.innerHTML+='<div style="aspect-ratio:1;border:1px solid #1e3a5f;border-radius:4px;overflow:hidden;position:relative;"><img src="'+p.url+'" style="width:100%;height:100%;object-fit:cover;" alt=""><button onclick="scanDelPhoto('+p.id+')" style="position:absolute;top:2px;right:2px;background:rgba(198,40,40,.9);color:#fff;border:none;border-radius:50%;width:15px;height:15px;cursor:pointer;font-size:9px;padding:0;">x</button></div>';});
   }
 }
@@ -2861,14 +3332,16 @@ window.scan3dGenerate=function(){
     var hab=[proj(-40,-10,-22),proj(40,-10,-22),proj(40,-10,22),proj(-40,-10,22),proj(-35,-30,-18),proj(35,-30,-18),proj(35,-30,18),proj(-35,-30,18)];
     face([hab[4],hab[5],hab[6],hab[7]],fc('acoperis'));face([hab[0],hab[1],hab[5],hab[4]],'rgba(10,32,64,0.7)');face([hab[2],hab[3],hab[7],hab[6]],'rgba(10,32,64,0.7)');
     [{x:-60,z:-28},{x:-60,z:28},{x:60,z:-28},{x:60,z:28}].forEach(function(w){var wp=proj(w.x,10,w.z);ctx.beginPath();ctx.ellipse(wp.px,wp.py,13,8,0.3,0,Math.PI*2);ctx.fillStyle='#060a14';ctx.fill();ctx.strokeStyle='rgba(0,229,255,0.3)';ctx.lineWidth=2;ctx.stroke();});
+    /* GPS overlay pe 3D */
     ctx.fillStyle='rgba(0,229,255,0.55)';ctx.font='9px monospace';
     var m=document.getElementById('sScanModel');ctx.fillText('3D: '+(m&&m.value?m.value:'VEHICUL'),8,14);ctx.fillText('ROT '+Math.round(ang%360)+'deg',8,26);
+    if(SS_GPS.lat){ctx.fillStyle='rgba(76,175,80,0.7)';ctx.fillText('GPS: '+SS_GPS.lat.toFixed(5)+', '+SS_GPS.lng.toFixed(5),8,H-10);}
     ang+=0.5;SS.c3d.raf=requestAnimationFrame(frame);
   }
   frame();scanToastS('Model 3D generat!','ok');
 };
 window.scanExportJSON=function(){
-  var d={ts:new Date().toISOString(),vehicul:{nr:(document.getElementById('sScanPlate')||{}).value,model:(document.getElementById('sScanModel')||{}).value,tip:(document.getElementById('sScanType')||{}).value,culoare:(document.getElementById('sScanColor')||{}).value},zone:SS.zones,note:(document.getElementById('sScanNotes')||{}).value,nr_foto:SS.photos.length};
+  var d={ts:new Date().toISOString(),device:DEVICE.model,gps:{lat:SS_GPS.lat,lng:SS_GPS.lng,acc:SS_GPS.acc},vehicul:{nr:(document.getElementById('sScanPlate')||{}).value,model:(document.getElementById('sScanModel')||{}).value,tip:(document.getElementById('sScanType')||{}).value,culoare:(document.getElementById('sScanColor')||{}).value},zone:SS.zones,note:(document.getElementById('sScanNotes')||{}).value,nr_foto:SS.photos.length};
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));a.download='scanare_'+(d.vehicul.nr||'vehicul')+'_'+Date.now()+'.json';a.click();scanToastS('JSON exportat!','ok');
 };
 window.scanExport2D=function(){if(!c2){scanToastS('Canvas indisponibil.','err');return;}var a=document.createElement('a');a.href=c2.toDataURL('image/png');a.download='schita2d_'+Date.now()+'.png';a.click();scanToastS('PNG exportat!','ok');};
@@ -2877,8 +3350,9 @@ window.scanExportPDF=function(){
   var model=(document.getElementById('sScanModel')||{}).value||'-';
   var notes=(document.getElementById('sScanNotes')||{}).value||'-';
   var zones=Object.entries(SS.zones).map(function(e){var el=document.getElementById(e[0]);return (el&&el.dataset?el.dataset.zone:e[0])+': '+e[1].toUpperCase();}).join('\n')||'-';
+  var gpsStr=SS_GPS.lat?'Lat: '+SS_GPS.lat.toFixed(6)+', Lng: '+SS_GPS.lng.toFixed(6)+' (precizie: '+SS_GPS.acc.toFixed(0)+'m)':'Indisponibil';
   var w=window.open('','_blank');
-  w.document.write('<!DOCTYPE html><html><head><title>Raport '+plate+'</title><style>body{font-family:monospace;padding:20px;max-width:800px;margin:0 auto;}table{width:100%;border-collapse:collapse;}td,th{border:1px solid #ccc;padding:5px;}th{background:#f0f0f0;}pre{background:#f5f5f5;padding:8px;}img{max-width:100%;}@media print{.np{display:none}}</style></head><body><h1>RAPORT SCANARE VEHICUL AVARIAT</h1><p>'+new Date().toLocaleString('ro-RO')+'</p><table><tr><th>Camp</th><th>Valoare</th></tr><tr><td>Nr. Inmatriculare</td><td><b>'+plate+'</b></td></tr><tr><td>Marca/Model</td><td>'+model+'</td></tr></table><h2>Zone Avariate</h2><pre>'+zones+'</pre><h2>Observatii</h2><pre>'+notes+'</pre><h2>Fotografii ('+SS.photos.length+')</h2><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">'+SS.photos.map(function(p){return '<img src="'+p.url+'">';}).join('')+'</div><button class="np" onclick="window.print()" style="margin-top:16px;padding:8px 18px;cursor:pointer;">Printeaza PDF</button></body></html>');
+  w.document.write('<!DOCTYPE html><html><head><title>Raport '+plate+'</title><style>body{font-family:monospace;padding:20px;max-width:800px;margin:0 auto;}table{width:100%;border-collapse:collapse;}td,th{border:1px solid #ccc;padding:5px;}th{background:#f0f0f0;}pre{background:#f5f5f5;padding:8px;}img{max-width:100%;}@media print{.np{display:none}}</style></head><body><h1>RAPORT SCANARE VEHICUL AVARIAT</h1><p>'+new Date().toLocaleString('ro-RO')+'</p><p><b>Dispozitiv:</b> '+DEVICE.model+'</p><table><tr><th>Camp</th><th>Valoare</th></tr><tr><td>Nr. Inmatriculare</td><td><b>'+plate+'</b></td></tr><tr><td>Marca/Model</td><td>'+model+'</td></tr><tr><td>GPS</td><td>'+gpsStr+'</td></tr></table><h2>Zone Avariate</h2><pre>'+zones+'</pre><h2>Observatii</h2><pre>'+notes+'</pre><h2>Fotografii ('+SS.photos.length+')</h2><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">'+SS.photos.map(function(p){return '<img src="'+p.url+'">';}).join('')+'</div><button class="np" onclick="window.print()" style="margin-top:16px;padding:8px 18px;cursor:pointer;">Printeaza PDF</button></body></html>');
   w.document.close();
 };
 window.scanReset=function(){
@@ -2891,12 +3365,30 @@ window.scanReset=function(){
   if(SS.c3d.raf){cancelAnimationFrame(SS.c3d.raf);SS.c3d.on=false;var ph=document.getElementById('sPlaceholder3d');if(ph)ph.style.display='';}
   scanToastS('Date resetate.');
 };
+
+/* ── Hook in sistemul de taburi existent ── */
 document.addEventListener('DOMContentLoaded',function(){
   document.querySelectorAll('[data-tab="scanare"]').forEach(function(btn){
-    btn.addEventListener('click',function(){setTimeout(function(){if(!c2)scan2dInitS();else scan2dResizeS();},80);});
+    btn.addEventListener('click', function(){
+      /* Reinitializeaza tab-ul la click */
+      var tab = document.getElementById('tab-scanare');
+      if (tab) {
+        /* Daca UI-ul de scanare e deja construit, doar resize */
+        if (tab.querySelector('.scan-wrap')) {
+          setTimeout(function(){ if(!c2) scan2dInitS(); else scan2dResizeS(); }, 80);
+        } else {
+          /* Prima oara sau dupa block — ruleaza detectia */
+          window.scanEnterTab();
+        }
+      }
+    });
   });
-  window.addEventListener('resize',function(){var tab=document.getElementById('tab-scanare');if(tab&&tab.classList.contains('active'))scan2dResizeS();});
+  window.addEventListener('resize',function(){
+    var tab=document.getElementById('tab-scanare');
+    if(tab&&tab.classList.contains('active'))scan2dResizeS();
+  });
 });
+
 function scanToastS(msg,type){
   var tc=document.getElementById('toast-container');if(!tc)return;
   var t=document.createElement('div');t.className='toast'+(type==='ok'?' toast-success':type==='err'?' toast-error':'');
