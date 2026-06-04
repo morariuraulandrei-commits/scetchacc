@@ -2724,12 +2724,13 @@ function initOSMSketch() {
 
 
 
+
 /* === SCANARE VEHICULE AVARIATE === */
 (function(){
 'use strict';
 
 /* ═══════════════════════════════════════════════════
-   DETECTIE DISPOZITIV
+   DEVICE DETECTION
    ═══════════════════════════════════════════════════ */
 var DEVICE = {
   isIOS: /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream,
@@ -2743,21 +2744,21 @@ var DEVICE = {
 async function detectiPhone() {
   if (!DEVICE.isIOS) return false;
   try {
-    var canvas = document.createElement('canvas');
-    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    var cv = document.createElement('canvas');
+    var gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
     if (gl) {
       var ext = gl.getExtension('WEBGL_debug_renderer_info');
       if (ext) {
-        var renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
-        if (/A17 Pro|A18 Pro|A16 Bionic|A15 Bionic/.test(renderer)) {
-          DEVICE.hasLiDAR = true; DEVICE.model = renderer; return true;
+        var r = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+        if (/A17 Pro|A18 Pro|A16 Bionic|A15 Bionic/.test(r)) {
+          DEVICE.hasLiDAR = true; DEVICE.model = r; return true;
         }
       }
     }
   } catch(e) {}
   try {
-    var devices = await navigator.mediaDevices.enumerateDevices();
-    var vd = devices.filter(function(d){ return d.kind==='videoinput'; });
+    var devs = await navigator.mediaDevices.enumerateDevices();
+    var vd = devs.filter(function(d){ return d.kind==='videoinput'; });
     var sw = window.screen.width * window.devicePixelRatio;
     var sh = window.screen.height * window.devicePixelRatio;
     if ((sw>=1179||sh>=2556) && vd.length>=2) {
@@ -2768,124 +2769,191 @@ async function detectiPhone() {
 }
 
 /* ═══════════════════════════════════════════════════
-   UI HELPERS
+   STATE GLOBAL
+   ═══════════════════════════════════════════════════ */
+var SS = {
+  photos:[], zones:{}, sev:'minor',
+  video:{ blob:null, duration:0 },
+  gps:{ lat:null, lng:null, acc:null, watchId:null },
+  lidar:{ active:false, depthData:[] },
+  meta:{ date:'', time:'', plate:'', model:'', color:'', officer:'' },
+  c2d:{ tool:'pen', objs:[], drawing:false, sx:0, sy:0, cur:null },
+  c3d:{ raf:null, frames:[], angle:0 },
+  processing:{ done:false, damageMap:{} }
+};
+var c2, x2;
+
+/* ═══════════════════════════════════════════════════
+   UI BLOCKS
    ═══════════════════════════════════════════════════ */
 function blockedUI(title, detail) {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:30px;text-align:center;gap:16px;background:#080f1e;">' +
-    '<div style="font-size:56px;">&#x1F6AB;</div>' +
-    '<div style="font-size:15px;font-weight:700;color:#ef9a9a;font-family:monospace;text-transform:uppercase;letter-spacing:2px;">' + title + '</div>' +
-    '<div style="font-size:11px;color:#546e7a;font-family:monospace;max-width:300px;line-height:1.7;">' + detail + '</div>' +
-    '<div style="padding:12px 16px;background:#0d1f3a;border:1px solid #1e3a5f;border-radius:8px;font-size:10px;color:#4fc3f7;font-family:monospace;">' +
-    'Compatibil: iPhone 12/13/14/15/16 Pro &amp; Pro Max</div></div>';
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+    'height:100%;padding:30px;text-align:center;gap:14px;background:#080f1e;">' +
+    '<div style="font-size:52px;">&#x1F6AB;</div>' +
+    '<div style="font-size:14px;font-weight:700;color:#ef9a9a;font-family:monospace;' +
+    'text-transform:uppercase;letter-spacing:2px;">' + title + '</div>' +
+    '<div style="font-size:11px;color:#546e7a;font-family:monospace;max-width:280px;line-height:1.7;">' + detail + '</div>' +
+    '<div style="padding:10px 14px;background:#0d1f3a;border:1px solid #1e3a5f;border-radius:8px;' +
+    'font-size:10px;color:#4fc3f7;font-family:monospace;line-height:1.8;">' +
+    'Compatibil:<br>iPhone 12/13/14/15/16 Pro &amp; Pro Max</div></div>';
 }
-
 function loadingUI(msg) {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;background:#080f1e;">' +
-    '<div style="width:44px;height:44px;border:3px solid #1e3a5f;border-top-color:#4fc3f7;border-radius:50%;animation:spinScan 1s linear infinite;"></div>' +
-    '<div style="font-size:11px;color:#4fc3f7;font-family:monospace;letter-spacing:2px;">' + (msg||'DETECTIE...') + '</div>' +
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+    'height:100%;gap:14px;background:#080f1e;">' +
+    '<div style="width:42px;height:42px;border:3px solid #1e3a5f;border-top-color:#4fc3f7;' +
+    'border-radius:50%;animation:spinScan 1s linear infinite;"></div>' +
+    '<div style="font-size:10px;color:#4fc3f7;font-family:monospace;letter-spacing:2px;">' + (msg||'SE INCARCA...') + '</div>' +
     '<style>@keyframes spinScan{to{transform:rotate(360deg)}}</style></div>';
 }
-
 function confirmUI() {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:30px;text-align:center;gap:14px;background:#080f1e;">' +
-    '<div style="font-size:48px;">&#x2753;</div>' +
-    '<div style="font-size:14px;font-weight:700;color:#ffc107;font-family:monospace;">Verificare Dispozitiv</div>' +
-    '<div style="font-size:11px;color:#90a4ae;font-family:monospace;max-width:280px;line-height:1.6;">Nu am putut detecta automat modelul. Aceasta sectiune functioneaza <b style="color:#4fc3f7">doar pe iPhone Pro</b> cu LiDAR.</div>' +
-    '<button onclick="scanConfirmPro(true)" style="width:100%;max-width:240px;padding:11px;background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:11px;border-radius:6px;cursor:pointer;">&#x2705; Da, am iPhone Pro cu LiDAR</button>' +
-    '<button onclick="scanConfirmPro(false)" style="width:100%;max-width:240px;padding:11px;background:#0d1f3a;border:1px solid #546e7a;color:#78909c;font-family:monospace;font-size:11px;border-radius:6px;cursor:pointer;">&#x274C; Nu, alt dispozitiv</button>' +
-    '</div>';
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+    'height:100%;padding:28px;text-align:center;gap:12px;background:#080f1e;">' +
+    '<div style="font-size:44px;">&#x2753;</div>' +
+    '<div style="font-size:13px;font-weight:700;color:#ffc107;font-family:monospace;">Verificare Dispozitiv</div>' +
+    '<div style="font-size:11px;color:#90a4ae;font-family:monospace;max-width:260px;line-height:1.6;">' +
+    'Nu am putut detecta automat modelul.<br>Aceasta sectiune functioneaza <b style="color:#4fc3f7">doar pe iPhone Pro</b> cu LiDAR.</div>' +
+    '<button onclick="scanConfirmPro(true)" style="width:100%;max-width:230px;padding:10px;background:#1565c0;' +
+    'border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:10px;border-radius:5px;cursor:pointer;">' +
+    '&#x2705; Da, am iPhone Pro cu LiDAR</button>' +
+    '<button onclick="scanConfirmPro(false)" style="width:100%;max-width:230px;padding:10px;background:#0d1f3a;' +
+    'border:1px solid #546e7a;color:#78909c;font-family:monospace;font-size:10px;border-radius:5px;cursor:pointer;">' +
+    '&#x274C; Nu, alt dispozitiv</button></div>';
 }
-
 function permsUI() {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;gap:12px;background:#080f1e;">' +
-    '<div style="font-size:44px;">&#x1F511;</div>' +
-    '<div style="font-size:14px;font-weight:700;color:#4fc3f7;font-family:monospace;text-transform:uppercase;letter-spacing:1px;">Permisiuni Necesare</div>' +
-    '<div style="font-size:11px;color:#90a4ae;font-family:monospace;max-width:260px;line-height:1.6;">Pentru cartografiere sunt necesare accesul la <b style="color:#ffc107">Camera</b> si <b style="color:#ffc107">Locatie GPS</b>.</div>' +
-    '<div style="width:100%;max-width:270px;background:#0a1628;border:1px solid #1a2f4a;border-radius:8px;padding:10px;font-family:monospace;font-size:10px;">' +
-    '<div id="sScanPermCam" style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a2f4a;"><span>&#x1F4F7; Camera + Video</span><span style="color:#546e7a">&#x23F3;</span></div>' +
-    '<div id="sScanPermGPS" style="display:flex;justify-content:space-between;padding:4px 0;"><span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x23F3;</span></div>' +
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+    'height:100%;padding:22px;text-align:center;gap:11px;background:#080f1e;">' +
+    '<div style="font-size:40px;">&#x1F511;</div>' +
+    '<div style="font-size:13px;font-weight:700;color:#4fc3f7;font-family:monospace;' +
+    'text-transform:uppercase;letter-spacing:1px;">Permisiuni Necesare</div>' +
+    '<div style="font-size:10px;color:#90a4ae;font-family:monospace;max-width:250px;line-height:1.6;">' +
+    'Pentru cartografiere cu LiDAR sunt necesare:<br>' +
+    '<b style="color:#ffc107">Camera</b>, <b style="color:#ffc107">Locatie GPS</b></div>' +
+    '<div style="width:100%;max-width:260px;background:#0a1628;border:1px solid #1a2f4a;' +
+    'border-radius:7px;padding:9px;font-family:monospace;font-size:10px;">' +
+    '<div id="sScanPermCam" style="display:flex;justify-content:space-between;padding:3px 0;' +
+    'border-bottom:1px solid #1a2f4a;"><span>&#x1F4F9; Camera + LiDAR</span>' +
+    '<span style="color:#546e7a">&#x23F3;</span></div>' +
+    '<div id="sScanPermGPS" style="display:flex;justify-content:space-between;padding:3px 0;">' +
+    '<span>&#x1F4CD; Locatie GPS</span><span style="color:#546e7a">&#x23F3;</span></div>' +
     '</div>' +
-    '<button id="sScanPermBtn" onclick="scanRequestPermissions()" style="padding:11px 24px;background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:11px;border-radius:6px;cursor:pointer;letter-spacing:1px;">&#x1F513; ACORDA PERMISIUNI</button>' +
+    '<button id="sScanPermBtn" onclick="scanRequestPermissions()" style="padding:10px 22px;' +
+    'background:#1565c0;border:1px solid #4fc3f7;color:#fff;font-family:monospace;' +
+    'font-size:10px;border-radius:5px;cursor:pointer;letter-spacing:1px;">&#x1F513; ACORDA PERMISIUNI</button>' +
     '<div style="font-size:9px;color:#37474f;font-family:monospace;">Vei vedea dialogurile native iOS</div></div>';
 }
 
 /* ═══════════════════════════════════════════════════
-   SCAN UI PRINCIPAL
+   MAIN UI
    ═══════════════════════════════════════════════════ */
 function buildMainUI() {
   var badge = DEVICE.model ?
-    '<span style="font-size:8px;color:#4caf50;border:1px solid #2e7d32;border-radius:8px;padding:1px 6px;margin-left:auto;">&#x2705; ' +
-    (DEVICE.model.length>25?'iPhone Pro LiDAR':DEVICE.model) + '</span>' : '';
+    '<span style="font-size:8px;color:#4caf50;border:1px solid #2e7d32;border-radius:8px;' +
+    'padding:1px 5px;margin-left:auto;">&#x2705; LiDAR</span>' : '';
 
   return '<div class="scan-wrap" id="sScanUI">' +
 
   /* ── SIDEBAR ── */
   '<div class="scan-sidebar">' +
-  '<div class="scan-sec-title" style="padding:8px;border-bottom:1px solid #1a2f4a;font-size:9px;display:flex;align-items:center;gap:5px;">&#x1F4E1; Cartografiere Vehicul' + badge + '</div>' +
 
-  /* Camera box — preview + butoane */
+  /* Header */
+  '<div class="scan-sec-title" style="padding:7px 8px;border-bottom:1px solid #1a2f4a;' +
+  'font-size:9px;display:flex;align-items:center;gap:5px;">&#x1F4E1; Cartografiere LiDAR' + badge + '</div>' +
+
+  /* Preview zona */
   '<div class="scan-camera-box" id="scanCameraBox">' +
-  '<video id="scanVideoRec" playsinline muted style="width:100%;height:100%;object-fit:cover;display:none;"></video>' +
-  '<canvas id="scanPhotoCanvas" style="display:none"></canvas>' +
-  '<div id="scanCamPreview" style="width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#050c1a;gap:6px;">' +
-  '<div style="font-size:32px;opacity:0.35">&#x1F3A5;</div>' +
-  '<p style="font-size:9px;color:#4fc3f7;opacity:0.7;font-family:monospace;text-align:center;padding:0 10px;margin:0;">Apasa FILMARE 360° pentru a incepe</p>' +
+  '<div id="scanCamPreview" style="width:100%;height:100%;display:flex;flex-direction:column;' +
+  'align-items:center;justify-content:center;background:#050c1a;gap:5px;">' +
+  '<div style="font-size:28px;opacity:0.35">&#x1F3A5;</div>' +
+  '<p style="font-size:9px;color:#4fc3f7;opacity:0.6;font-family:monospace;text-align:center;' +
+  'padding:0 8px;margin:0;">Apasa FILMARE 360° pentru a incepe</p>' +
   '</div>' +
-  '<div class="scan-cam-overlay"><div class="scan-corners"><span></span></div>' +
-  '<div class="scan-cam-hud"><span id="scanCamTxt" style="color:#00e5ff;font-size:9px;font-family:monospace;">GATA</span>' +
-  '<span id="scanRecTimer" style="color:#f44336;font-size:9px;font-family:monospace;display:none;">&#x23FA; 0:00</span></div></div>' +
+  /* Overlay cu date live */
+  '<div class="scan-cam-overlay" id="scanLidarOverlay" style="display:none;">' +
+  '<div class="scan-corners"><span></span></div>' +
+  '<div style="position:absolute;top:5px;left:5px;right:5px;display:flex;justify-content:space-between;' +
+  'align-items:flex-start;">' +
+  '<div style="background:rgba(0,0,0,0.65);padding:3px 6px;border-radius:3px;font-family:monospace;' +
+  'font-size:8px;color:#00e5ff;line-height:1.6;">' +
+  '<div id="overlayDate" style="color:#ffc107;font-weight:700;"></div>' +
+  '<div id="overlayTime" style="color:#00e5ff;"></div>' +
+  '<div id="overlayGPS" style="color:#4caf50;"></div>' +
+  '</div>' +
+  '<div style="background:rgba(198,40,40,0.85);padding:3px 7px;border-radius:3px;' +
+  'font-family:monospace;font-size:8px;color:#fff;display:flex;align-items:center;gap:4px;">' +
+  '<div id="recDotOverlay" style="width:5px;height:5px;border-radius:50%;background:#fff;' +
+  'animation:blinkDot 1s infinite;"></div>' +
+  '<span id="overlayRecTxt">REC</span><span id="overlayTimer">0:00</span></div>' +
+  '</div>' +
+  '<div style="position:absolute;bottom:5px;left:5px;right:5px;">' +
+  '<div style="background:rgba(0,0,0,0.65);padding:3px 6px;border-radius:3px;' +
+  'font-family:monospace;font-size:8px;color:#90caf9;display:flex;justify-content:space-between;">' +
+  '<span id="overlayPlate"></span>' +
+  '<span style="color:#4fc3f7;">LiDAR <span id="lidarStatus">&#x23F3;</span></span>' +
+  '</div></div>' +
+  '</div>' +
   '</div>' +
 
   /* Butoane filmare */
-  '<input type="file" id="scanVideoInput" accept="video/*" capture="environment" style="display:none" onchange="scanHandleVideoFile(event)">' +
-  '<input type="file" id="scanPhotoInput" accept="image/*" capture="environment" style="display:none" onchange="scanHandlePhotoFile(event)">' +
-  '<input type="file" id="scanGalleryInput" accept="image/*,video/*" multiple style="display:none" onchange="scanHandleGallery(event)">' +
+  '<input type="file" id="scanVideoInput" accept="video/*" capture="environment" ' +
+  'style="display:none" onchange="scanHandleVideoFile(event)">' +
+  '<input type="file" id="scanPhotoInput" accept="image/*" capture="environment" ' +
+  'style="display:none" onchange="scanHandlePhotoFile(event)">' +
   '<div class="scan-cam-btns">' +
-  '<button class="scan-btn" style="flex:3;background:#1565c0;border-color:#4fc3f7;color:#fff;font-weight:700;" onclick="scanStartRec360()">&#x1F3A5; FILMARE 360&#xB0;</button>' +
+  '<button class="scan-btn" id="sBtnFilm" style="flex:3;background:#1565c0;border-color:#4fc3f7;' +
+  'color:#fff;font-weight:700;" onclick="scanStartFilmare()">&#x1F3A5; FILMARE 360&#xB0;</button>' +
   '<button class="scan-btn" onclick="document.getElementById(\'scanPhotoInput\').click()">&#x1F4F7;</button>' +
-  '<button class="scan-btn" onclick="document.getElementById(\'scanGalleryInput\').click()">&#x1F5BC;</button>' +
   '</div>' +
 
-  /* Instructiuni filmare */
+  /* Ghid filmare */
   '<div id="scanRecGuide" class="scan-section">' +
-  '<div class="scan-sec-title">&#x1F4CB; Ghid Filmare 360&#xB0;</div>' +
-  '<div style="font-size:9px;color:#546e7a;font-family:monospace;line-height:1.7;">' +
-  '1. Pozitioneaza-te la 2-3m de masina<br>' +
-  '2. Apasa FILMARE 360&#xB0;<br>' +
-  '3. Filmeaza incet in jurul masinii<br>' +
-  '4. Dupa tur complet, apasa STOP<br>' +
-  '5. Asteapta generarea cartografierii' +
+  '<div class="scan-sec-title">&#x1F4CB; Ghid Filmare</div>' +
+  '<div style="font-size:9px;color:#546e7a;font-family:monospace;line-height:1.8;">' +
+  '<span style="color:#4fc3f7;">1.</span> Pozitioneaza-te la 2-3m<br>' +
+  '<span style="color:#4fc3f7;">2.</span> Apasa FILMARE 360&#xB0;<br>' +
+  '<span style="color:#4fc3f7;">3.</span> Mergi incet in jurul masinii<br>' +
+  '<span style="color:#4fc3f7;">4.</span> Tur complet ~45-60 sec<br>' +
+  '<span style="color:#4fc3f7;">5.</span> Opreste &#x2192; schita se genereaza automat' +
   '</div></div>' +
 
-  /* GPS */
+  /* Date dosar */
   '<div class="scan-section">' +
-  '<div class="scan-sec-title">&#x1F4CD; GPS</div>' +
-  '<div id="sScanGPSInfo" style="font-size:9px;color:#546e7a;font-family:monospace;">' +
-  '<button onclick="scanActivateGPS()" style="width:100%;padding:5px;background:#0d1f3a;border:1px solid #1565c0;color:#4fc3f7;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x1F4CD; Activeaza GPS</button>' +
-  '</div></div>' +
-
-  /* Date vehicul */
-  '<div class="scan-section">' +
-  '<div class="scan-sec-title">&#x1F697; Date Vehicul</div>' +
-  '<div class="scan-field"><label>Nr. Inmatriculare</label><input type="text" id="sScanPlate" placeholder="AR-00-XYZ" style="text-transform:uppercase"></div>' +
-  '<div class="scan-field"><label>Marca / Model</label><input type="text" id="sScanModel" placeholder="ex: VW Tiguan 2020"></div>' +
-  '<div class="scan-field"><label>Tip</label><select id="sScanType"><option value="autoturism">Autoturism</option><option value="suv">SUV</option><option value="camion">Camion</option><option value="moto">Motocicleta</option><option value="autobuz">Autobuz</option></select></div>' +
+  '<div class="scan-sec-title">&#x1F4CB; Date Dosar</div>' +
+  '<div class="scan-field"><label>Nr. Inmatriculare</label>' +
+  '<input type="text" id="sScanPlate" placeholder="AR-00-XYZ" ' +
+  'style="text-transform:uppercase;font-size:12px;font-weight:700;" ' +
+  'oninput="document.getElementById(\'overlayPlate\').textContent=this.value"></div>' +
+  '<div class="scan-field"><label>Marca / Model</label>' +
+  '<input type="text" id="sScanModel" placeholder="VW Tiguan 2020"></div>' +
+  '<div class="scan-field"><label>Culoare</label>' +
+  '<input type="text" id="sScanColor" placeholder="Alb Perlat"></div>' +
+  '<div class="scan-field"><label>Ofiter / Agent</label>' +
+  '<input type="text" id="sScanOfficer" placeholder="Nume Prenume"></div>' +
   '</div>' +
 
   /* Severitate */
   '<div class="scan-section">' +
   '<div class="scan-sec-title">&#x26A0; Severitate</div>' +
   '<div class="scan-sev-btns">' +
-  '<button class="scan-sev-btn scan-sev-active" data-sev="minor" onclick="scanSetSev(this,\'minor\')">Minor</button>' +
-  '<button class="scan-sev-btn" data-sev="major" onclick="scanSetSev(this,\'major\')">Major</button>' +
-  '<button class="scan-sev-btn" data-sev="total" onclick="scanSetSev(this,\'total\')">Total</button>' +
+  '<button class="scan-sev-btn scan-sev-active" data-sev="minor" onclick="scanSetSev(this,\'minor\')">&#x26A1; Minor</button>' +
+  '<button class="scan-sev-btn" data-sev="major" onclick="scanSetSev(this,\'major\')">&#x1F525; Major</button>' +
+  '<button class="scan-sev-btn" data-sev="total" onclick="scanSetSev(this,\'total\')">&#x1F480; Total</button>' +
   '</div>' +
-  '<div class="scan-field"><label>Note</label><textarea id="sScanNotes" rows="2" placeholder="Descriere daune..."></textarea></div>' +
+  '<div class="scan-field"><label>Note daune</label>' +
+  '<textarea id="sScanNotes" rows="2" placeholder="Descriere daune observate..."></textarea></div>' +
   '</div>' +
 
-  /* Frames extrase */
+  /* GPS */
   '<div class="scan-section">' +
-  '<div class="scan-sec-title">&#x1F5BC; Frames (<span id="sScanPhotoCount">0</span>)</div>' +
+  '<div class="scan-sec-title">&#x1F4CD; GPS</div>' +
+  '<div id="sScanGPSInfo">' +
+  '<button onclick="scanActivateGPS()" style="width:100%;padding:5px;background:#0d1f3a;' +
+  'border:1px solid #1565c0;color:#4fc3f7;font-family:monospace;font-size:9px;' +
+  'border-radius:3px;cursor:pointer;">&#x1F4CD; Activeaza GPS</button>' +
+  '</div></div>' +
+
+  /* Frames thumbnail */
+  '<div class="scan-section">' +
+  '<div class="scan-sec-title">&#x1F3A5; Frames (<span id="sScanPhotoCount">0</span>)</div>' +
   '<div class="scan-photos-mini" id="sScanPhotosMini"></div>' +
   '</div>' +
   '</div>' + /* /sidebar */
@@ -2894,49 +2962,68 @@ function buildMainUI() {
   '<div class="scan-panel-main">' +
   '<div class="scan-view-tabs">' +
   '<button class="scan-view-tab scan-view-active" onclick="scanView(\'proc\',this)">&#x2699; Procesare</button>' +
-  '<button class="scan-view-tab" onclick="scanView(\'2d\',this)">&#x1F5FA; 2D</button>' +
+  '<button class="scan-view-tab" onclick="scanView(\'schita\',this)">&#x1F4D0; Schita</button>' +
   '<button class="scan-view-tab" onclick="scanView(\'3d\',this)">&#x1F537; 3D</button>' +
   '<button class="scan-view-tab" onclick="scanView(\'sil\',this)">&#x1F697; Silueta</button>' +
-  '<button class="scan-view-tab" onclick="scanView(\'foto\',this)">&#x1F4F7; Foto</button>' +
+  '<button class="scan-view-tab" onclick="scanView(\'foto\',this)">&#x1F4F7; Frames</button>' +
   '</div>' +
 
   /* TAB PROCESARE */
   '<div id="sViewProc" class="scan-view-content scan-view-show">' +
-  '<div id="sProcStatus" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;background:#050c1a;">' +
-  '<div style="font-size:44px;opacity:0.3">&#x1F3A5;</div>' +
-  '<div style="font-size:13px;color:#546e7a;font-family:monospace;text-align:center;">Filmeaza vehiculul 360° si cartografierea se va genera automat</div>' +
-  '<div style="font-size:10px;color:#37474f;font-family:monospace;text-align:center;max-width:260px;">Sistemul extrage frame-uri din video, analizeaza daunele si construieste modelele 2D si 3D</div>' +
+  '<div id="sProcStatus" style="flex:1;display:flex;flex-direction:column;align-items:center;' +
+  'justify-content:center;gap:12px;padding:20px;background:#050c1a;">' +
+  '<div style="font-size:40px;opacity:0.25">&#x1F3A5;</div>' +
+  '<div style="font-size:12px;color:#546e7a;font-family:monospace;text-align:center;max-width:240px;">' +
+  'Filmeaza vehiculul 360&#xB0; si schita tehnica se va genera automat din video</div>' +
   '</div></div>' +
 
-  /* TAB 2D */
-  '<div id="sView2d" class="scan-view-content" style="display:none;">' +
+  /* TAB SCHITA TEHNICA */
+  '<div id="sViewSchita" class="scan-view-content" style="display:none;flex-direction:column;">' +
   '<div class="scan-2d-toolbar">' +
-  '<button class="scan-tool-btn scan-tool-active" onclick="scan2dTool(this,\'select\')">Sel</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'pen\')">Creion</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'line\')">Linie</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'rect\')">Rect</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'circle\')">Cerc</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'measure\')">Masura</button>' +
+  '<button class="scan-tool-btn scan-tool-active" onclick="scan2dTool(this,\'pen\')">&#x270F; Creion</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'line\')">&#x2014; Linie</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'rect\')">&#x25FB; Rect</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'circle\')">&#x25EF; Cerc</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'measure\')">&#x1F4D0; Dim.</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'text\')">T Text</button>' +
+  '<button class="scan-tool-btn" onclick="scan2dTool(this,\'arrow\')">&#x2192; Sag.</button>' +
   '<div style="flex:1"></div>' +
-  '<input type="color" id="sTool2dColor" value="#ff3d00" style="width:22px;height:22px;border:1px solid #1e3a5f;border-radius:3px;cursor:pointer;padding:1px;">' +
+  '<select id="sDmgSeverSelect" style="background:#0d1f3a;border:1px solid #1e3a5f;color:#90caf9;' +
+  'font-size:9px;padding:2px 4px;border-radius:3px;font-family:monospace;cursor:pointer;">' +
+  '<option value="minor">Minor</option><option value="major">Major</option>' +
+  '<option value="total">Total</option></select>' +
+  '<input type="color" id="sTool2dColor" value="#f44336" style="width:22px;height:22px;' +
+  'border:1px solid #1e3a5f;border-radius:3px;cursor:pointer;padding:1px;">' +
   '<button class="scan-tool-btn" onclick="scan2dUndo()">&#x21A9;</button>' +
-  '<button class="scan-tool-btn" onclick="scan2dClear()">&#x1F5D1;</button>' +
+  '<button class="scan-tool-btn" onclick="schitaRegen()">&#x1F504;</button>' +
   '</div>' +
   '<canvas id="sScanCanvas2D" style="flex:1;width:100%;cursor:crosshair;display:block;min-height:200px;"></canvas>' +
-  '<div class="scan-2d-status"><span>Cursor: <b id="sScan2dXY">0,0</b></span><span>Obiecte: <b id="sScan2dCount">0</b></span></div>' +
-  '</div>' +
+  '<div class="scan-2d-status">' +
+  '<span>Unealta: <b id="sScan2dTool">pen</b></span>' +
+  '<span>Cursor: <b id="sScan2dXY">0,0</b></span>' +
+  '<span>Obiecte: <b id="sScan2dCount">0</b></span>' +
+  '</div></div>' +
 
   /* TAB 3D */
   '<div id="sView3d" class="scan-view-content" style="display:none;flex:1;position:relative;min-height:200px;">' +
   '<canvas id="sScanCanvas3D" style="width:100%;height:100%;display:block;"></canvas>' +
-  '<div id="sPlaceholder3d" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#37474f;font-family:monospace;">' +
-  '<div style="font-size:44px;opacity:0.25">&#x1F537;</div>' +
-  '<p style="font-size:11px;text-align:center;max-width:220px;opacity:0.5;">Modelul 3D se genereaza automat dupa filmare</p>' +
+  '<div id="sPlaceholder3d" style="position:absolute;inset:0;display:flex;flex-direction:column;' +
+  'align-items:center;justify-content:center;gap:10px;color:#37474f;font-family:monospace;">' +
+  '<div style="font-size:40px;opacity:0.2">&#x1F537;</div>' +
+  '<p style="font-size:10px;text-align:center;max-width:200px;opacity:0.5;">' +
+  'Modelul 3D se genereaza automat dupa procesarea video</p>' +
+  '</div>' +
+  '<div style="position:absolute;top:6px;right:6px;display:flex;flex-direction:column;gap:4px;">' +
+  '<button onclick="scan3dRotSpeed(-1)" style="width:26px;height:26px;background:#0d1f3a;' +
+  'border:1px solid #1e3a5f;color:#90caf9;font-size:10px;border-radius:3px;cursor:pointer;">&#x23EA;</button>' +
+  '<button onclick="scan3dRotSpeed(1)" style="width:26px;height:26px;background:#0d1f3a;' +
+  'border:1px solid #1e3a5f;color:#90caf9;font-size:10px;border-radius:3px;cursor:pointer;">&#x23E9;</button>' +
   '</div></div>' +
 
   /* TAB SILUETA */
-  '<div id="sViewSil" class="scan-view-content" style="display:none;overflow-y:auto;padding:12px;flex:1;">' +
-  '<div style="font-size:10px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-family:monospace;">Zone detectate automat din video — click pentru a edita</div>' +
+  '<div id="sViewSil" class="scan-view-content" style="display:none;overflow-y:auto;padding:10px;flex:1;">' +
+  '<div style="font-size:9px;color:#546e7a;text-transform:uppercase;letter-spacing:1px;' +
+  'margin-bottom:8px;font-family:monospace;">Zone detectate automat — click pentru editare manuala</div>' +
   '<div style="display:flex;justify-content:center;">' +
   '<svg id="scanSilSVG" width="300" height="190" viewBox="0 0 300 190">' +
   '<rect x="35" y="55" width="230" height="95" rx="18" fill="#0d1f3a" stroke="#1e3a5f" stroke-width="1.5"/>' +
@@ -2957,23 +3044,30 @@ function buildMainUI() {
   '<text x="278" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">FATA</text>' +
   '<text x="22" y="92" fill="#37474f" font-size="7" text-anchor="middle" font-family="monospace">SPATE</text>' +
   '</svg></div>' +
-  '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px;font-size:9px;color:#78909c;font-family:monospace;">' +
-  '<span style="color:#546e7a">Neatasat</span><span style="color:#ffc107">Minor</span><span style="color:#ff5722">Major</span><span style="color:#f44336">Total</span>' +
+  '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:6px;' +
+  'font-size:9px;color:#78909c;font-family:monospace;">' +
+  '<span style="color:#546e7a">&#x25A0; Neatasat</span>' +
+  '<span style="color:#ffc107">&#x25A0; Minor</span>' +
+  '<span style="color:#ff5722">&#x25A0; Major</span>' +
+  '<span style="color:#f44336">&#x25A0; Total</span>' +
   '</div>' +
-  '<div id="sScanZoneList" style="margin-top:8px;padding:8px;background:#080f1e;border:1px solid #1a2f4a;border-radius:4px;font-size:10px;color:#78909c;font-family:monospace;">-- Nicio zona --</div>' +
+  '<div id="sScanZoneList" style="margin-top:8px;padding:8px;background:#080f1e;' +
+  'border:1px solid #1a2f4a;border-radius:4px;font-size:9px;color:#78909c;font-family:monospace;">' +
+  '-- Nicio zona --</div>' +
   '</div>' +
 
-  /* TAB FOTO */
+  /* TAB FRAMES */
   '<div id="sViewFoto" class="scan-view-content" style="display:none;overflow-y:auto;padding:8px;flex:1;">' +
-  '<div style="font-size:9px;color:#546e7a;margin-bottom:6px;font-family:monospace;">FRAMES EXTRASE — <span id="sScanFotoCount">0</span></div>' +
-  '<div id="sScanFotoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:5px;"></div>' +
+  '<div style="font-size:9px;color:#546e7a;margin-bottom:6px;font-family:monospace;">' +
+  'FRAMES EXTRASE: <span id="sScanFotoCount">0</span></div>' +
+  '<div id="sScanFotoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:4px;"></div>' +
   '</div>' +
 
   /* Export bar */
   '<div class="scan-export-bar">' +
   '<button class="scan-btn" onclick="scanExportJSON()">&#x1F4BE; JSON</button>' +
-  '<button class="scan-btn" onclick="scanExport2D()">&#x1F5FA; PNG</button>' +
-  '<button class="scan-btn scan-btn-pdf" onclick="scanExportPDF()">&#x1F4C4; PDF</button>' +
+  '<button class="scan-btn" onclick="scanExportSchita()">&#x1F4D0; Schita PNG</button>' +
+  '<button class="scan-btn scan-btn-pdf" onclick="scanExportPDF()">&#x1F4C4; PDF Dosar</button>' +
   '<button class="scan-btn" style="color:#78909c;border-color:#546e7a" onclick="scanReset()">&#x1F504;</button>' +
   '</div>' +
   '</div>' + /* /panel-main */
@@ -2981,7 +3075,7 @@ function buildMainUI() {
 }
 
 /* ═══════════════════════════════════════════════════
-   DETECTIE + PERMISIUNI
+   FLOW: DETECTIE → PERMISIUNI
    ═══════════════════════════════════════════════════ */
 var scanReady = false;
 
@@ -2993,15 +3087,13 @@ window.scanEnterTab = async function() {
     return;
   }
   wrap.innerHTML = loadingUI('DETECTIE DISPOZITIV...');
-  await new Promise(function(r){ setTimeout(r,400); });
-
+  await new Promise(function(r){ setTimeout(r,350); });
   if (DEVICE.isAndroid) { wrap.innerHTML = blockedUI('Android incompatibil','Cartografierea LiDAR functioneaza exclusiv pe iPhone Pro (12 Pro si mai nou).'); return; }
   if (DEVICE.isWindows) { wrap.innerHTML = blockedUI('Windows incompatibil','Aceasta functie necesita hardware-ul LiDAR al iPhone Pro.'); return; }
   if (DEVICE.isLinux)   { wrap.innerHTML = blockedUI('Linux incompatibil','Aceasta functie necesita hardware-ul LiDAR al iPhone Pro.'); return; }
   if (DEVICE.isMac)     { wrap.innerHTML = blockedUI('Mac incompatibil','Aceasta functie necesita hardware-ul LiDAR al iPhone Pro.'); return; }
-
   if (DEVICE.isIOS) {
-    wrap.innerHTML = loadingUI('DETECTIE iPhone...');
+    wrap.innerHTML = loadingUI('DETECTIE iPhone Pro...');
     var r = await detectiPhone();
     if (r === false) { wrap.innerHTML = blockedUI('iPhone fara LiDAR','Modelul tau nu are senzor LiDAR. Necesar: iPhone 12 Pro sau mai nou.'); return; }
     if (r === null)  { wrap.innerHTML = confirmUI(); return; }
@@ -3019,33 +3111,28 @@ window.scanConfirmPro = async function(yes) {
 
 async function doPerm(wrap) {
   wrap.innerHTML = permsUI();
-  setTimeout(function(){ window.scanRequestPermissions(); }, 600);
+  setTimeout(function(){ window.scanRequestPermissions(); }, 500);
 }
 
 window.scanRequestPermissions = async function() {
   var btn = document.getElementById('sScanPermBtn');
   if (btn) { btn.disabled=true; btn.textContent='Se solicita...'; }
   var camOK = false;
-
-  /* Camera */
   try {
-    var s = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+    var s = await navigator.mediaDevices.getUserMedia({ video:{facingMode:{ideal:'environment'}}, audio:false });
     s.getTracks().forEach(function(t){ t.stop(); });
     camOK = true;
     var el = document.getElementById('sScanPermCam');
-    if (el) el.innerHTML = '<span>&#x1F4F7; Camera + Video</span><span style="color:#4caf50">&#x2705; Acordat</span>';
+    if (el) el.innerHTML = '<span>&#x1F4F9; Camera + LiDAR</span><span style="color:#4caf50">&#x2705; Acordat</span>';
   } catch(e) {
     var el = document.getElementById('sScanPermCam');
-    if (el) el.innerHTML = '<span>&#x1F4F7; Camera + Video</span><span style="color:#f44336">&#x274C; Refuzat</span>';
+    if (el) el.innerHTML = '<span>&#x1F4F9; Camera + LiDAR</span><span style="color:#f44336">&#x274C; Refuzat</span>';
   }
-
-  /* GPS status */
   var gpsEl = document.getElementById('sScanPermGPS');
-  if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; GPS</span><span style="color:#546e7a">-- activare dupa --</span>';
-
+  if (gpsEl) gpsEl.innerHTML = '<span>&#x1F4CD; GPS</span><span style="color:#546e7a">-- activezi dupa --</span>';
   if (camOK) {
     scanReady = true;
-    await new Promise(function(r){ setTimeout(r,700); });
+    await new Promise(function(r){ setTimeout(r,600); });
     var wrap = document.getElementById('tab-scanare');
     if (wrap) {
       wrap.innerHTML = buildMainUI();
@@ -3053,167 +3140,148 @@ window.scanRequestPermissions = async function() {
         scan2dInitS();
         scanStartGPS();
         scanRestorePhotos();
+        startOverlayClock();
       }, 120);
     }
   } else {
     if (btn) { btn.disabled=false; btn.textContent='Incearca din nou'; }
     var el = document.getElementById('sScanPermCam');
     if (el) el.insertAdjacentHTML('afterend',
-      '<div style="margin-top:8px;padding:8px;background:rgba(244,67,54,0.1);border:1px solid #c62828;border-radius:5px;font-size:9px;color:#ef9a9a;font-family:monospace;">' +
+      '<div style="margin-top:7px;padding:7px;background:rgba(244,67,54,0.1);border:1px solid #c62828;' +
+      'border-radius:4px;font-size:9px;color:#ef9a9a;font-family:monospace;">' +
       'Setari iPhone > Safari > Camera > Permite</div>');
   }
 };
 
 /* ═══════════════════════════════════════════════════
+   OVERLAY CLOCK — data/ora live pe ecran filmare
+   ═══════════════════════════════════════════════════ */
+var clockInterval = null;
+
+function startOverlayClock() {
+  if (clockInterval) clearInterval(clockInterval);
+  function tick() {
+    var now = new Date();
+    var zp = function(n){ return n<10?'0'+n:n; };
+    var dateStr = zp(now.getDate())+'.'+zp(now.getMonth()+1)+'.'+now.getFullYear();
+    var timeStr = zp(now.getHours())+':'+zp(now.getMinutes())+':'+zp(now.getSeconds());
+    var el = document.getElementById('overlayDate');
+    if (el) el.textContent = dateStr;
+    var el2 = document.getElementById('overlayTime');
+    if (el2) el2.textContent = timeStr;
+    /* GPS in overlay */
+    var gpsOv = document.getElementById('overlayGPS');
+    if (gpsOv && SS.gps.lat) {
+      gpsOv.textContent = SS.gps.lat.toFixed(5)+' '+SS.gps.lng.toFixed(5);
+    }
+  }
+  tick();
+  clockInterval = setInterval(tick, 1000);
+}
+
+/* ═══════════════════════════════════════════════════
    GPS
    ═══════════════════════════════════════════════════ */
-var SS_GPS = { lat:null, lng:null, acc:null, watchId:null };
-
 window.scanActivateGPS = function() {
   var el = document.getElementById('sScanGPSInfo');
-  if (el) el.innerHTML = '<span style="color:#4fc3f7;font-size:9px;">&#x23F3; Se obtine locatia...</span>';
+  if (el) el.innerHTML='<span style="color:#4fc3f7;font-size:9px;">&#x23F3; Se obtine locatia...</span>';
   if (!navigator.geolocation) {
-    if (el) el.innerHTML = '<span style="color:#546e7a;font-size:9px;">GPS indisponibil</span>';
-    return;
+    if (el) el.innerHTML='<span style="color:#546e7a;font-size:9px;">GPS indisponibil</span>'; return;
   }
   navigator.geolocation.getCurrentPosition(
     function(pos) {
-      SS_GPS.lat=pos.coords.latitude; SS_GPS.lng=pos.coords.longitude; SS_GPS.acc=pos.coords.accuracy;
-      scanUpdateGPS(el, pos.coords);
-      scanToastS('GPS activat! Precizie: '+pos.coords.accuracy.toFixed(0)+'m','ok');
-      if (SS_GPS.watchId) navigator.geolocation.clearWatch(SS_GPS.watchId);
-      SS_GPS.watchId = navigator.geolocation.watchPosition(
-        function(p){ SS_GPS.lat=p.coords.latitude;SS_GPS.lng=p.coords.longitude;SS_GPS.acc=p.coords.accuracy;scanUpdateGPS(el,p.coords); },
+      SS.gps.lat=pos.coords.latitude; SS.gps.lng=pos.coords.longitude; SS.gps.acc=pos.coords.accuracy;
+      updateGPSDisplay(el, pos.coords);
+      scanToastS('GPS activat! '+pos.coords.accuracy.toFixed(0)+'m precizie','ok');
+      if (SS.gps.watchId) navigator.geolocation.clearWatch(SS.gps.watchId);
+      SS.gps.watchId = navigator.geolocation.watchPosition(
+        function(p){ SS.gps.lat=p.coords.latitude;SS.gps.lng=p.coords.longitude;SS.gps.acc=p.coords.accuracy;updateGPSDisplay(el,p.coords); },
         function(){},
         {enableHighAccuracy:true,timeout:30000,maximumAge:5000}
       );
     },
     function(err) {
-      var msgs={1:'Refuzat — Setari > Confidentialitate > Servicii Localizare > Safari > In timpul utilizarii',2:'Semnal slab',3:'Timeout'};
-      if (el) el.innerHTML='<div style="color:#ff9800;font-size:9px;">&#x26A0; '+(msgs[err.code]||'Eroare')+'</div>'+
-        '<button onclick="scanActivateGPS()" style="margin-top:4px;width:100%;padding:4px;background:#0d1f3a;border:1px solid #f57c00;color:#ff9800;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x21BA; Reincearca</button>';
+      var msgs={1:'Refuzat — Setari > Confidentialitate > Servicii Localizare > Safari',2:'Semnal slab',3:'Timeout'};
+      if (el) el.innerHTML='<div style="color:#ff9800;font-size:9px;">&#x26A0; '+(msgs[err.code]||'Eroare GPS')+'</div>'+
+        '<button onclick="scanActivateGPS()" style="margin-top:3px;width:100%;padding:3px;background:#0d1f3a;'+
+        'border:1px solid #f57c00;color:#ff9800;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x21BA; Reincearca</button>';
     },
     {enableHighAccuracy:false,timeout:12000,maximumAge:60000}
   );
 };
 
-function scanUpdateGPS(el, c) {
+function updateGPSDisplay(el, c) {
   if (!el) return;
-  var col = c.accuracy<20?'#4caf50':c.accuracy<100?'#ff9800':'#f44336';
-  el.innerHTML='<div style="display:flex;justify-content:space-between;"><span style="color:#4caf50;font-size:9px;">&#x2022; GPS Activ</span><span style="color:'+col+';font-size:9px;">'+c.accuracy.toFixed(0)+'m</span></div>'+
+  var col=c.accuracy<20?'#4caf50':c.accuracy<100?'#ff9800':'#f44336';
+  el.innerHTML='<div style="display:flex;justify-content:space-between;">' +
+    '<span style="color:#4caf50;font-size:9px;">&#x2022; GPS Activ</span>' +
+    '<span style="color:'+col+';font-size:9px;">'+c.accuracy.toFixed(0)+'m</span></div>'+
     '<div style="font-size:8px;color:#90caf9;font-family:monospace;">'+c.latitude.toFixed(6)+'</div>'+
     '<div style="font-size:8px;color:#90caf9;font-family:monospace;">'+c.longitude.toFixed(6)+'</div>';
 }
 
 function scanStartGPS() {
   var el = document.getElementById('sScanGPSInfo');
-  if (el) el.innerHTML='<button onclick="scanActivateGPS()" style="width:100%;padding:5px;background:#0d1f3a;border:1px solid #1565c0;color:#4fc3f7;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x1F4CD; Activeaza GPS</button>';
+  if (el) el.innerHTML='<button onclick="scanActivateGPS()" style="width:100%;padding:5px;background:#0d1f3a;'+
+    'border:1px solid #1565c0;color:#4fc3f7;font-family:monospace;font-size:9px;border-radius:3px;cursor:pointer;">&#x1F4CD; Activeaza GPS</button>';
 }
 
 /* ═══════════════════════════════════════════════════
-   STATE
+   FILMARE — iOS input[capture=video]
    ═══════════════════════════════════════════════════ */
-var SS = {
-  photos:[], zones:{}, sev:'minor',
-  video: { recording:false, mediaRecorder:null, chunks:[], blob:null, timerInterval:null, seconds:0 },
-  c2d:{tool:'select',objs:[],drawing:false,sx:0,sy:0,cur:null},
-  c3d:{on:false,raf:null,frames:[],textures:[]}
-};
-var c2, x2;
+var recTimerInterval = null;
+var recSeconds = 0;
 
-/* ═══════════════════════════════════════════════════
-   FILMARE 360° — MediaRecorder API
-   ═══════════════════════════════════════════════════ */
-window.scanStartRec360 = async function() {
-  /* Pe iOS folosim input[capture=video] — MediaRecorder nu e suportat pe iOS Safari */
-  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  if (isIOS) {
-    /* iOS: deschide camera video nativa */
-    document.getElementById('scanVideoInput').click();
-    return;
-  }
-
-  /* Desktop/Android: MediaRecorder stream */
-  try {
-    var stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} },
-      audio:false
-    });
-
-    var vid = document.getElementById('scanVideoRec');
-    vid.srcObject = stream;
-    vid.style.display = 'block';
-    document.getElementById('scanCamPreview').style.display = 'none';
-
-    /* Porneste MediaRecorder */
-    var mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' :
-                   MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
-    SS.video.chunks = [];
-    SS.video.mediaRecorder = new MediaRecorder(stream, {mimeType:mimeType});
-    SS.video.mediaRecorder.ondataavailable = function(e){ if(e.data.size>0) SS.video.chunks.push(e.data); };
-    SS.video.mediaRecorder.onstop = function() {
-      SS.video.blob = new Blob(SS.video.chunks, {type:mimeType});
-      stream.getTracks().forEach(function(t){t.stop();});
-      vid.style.display='none';
-      document.getElementById('scanCamPreview').style.display='flex';
-      scanProcessVideo(SS.video.blob);
-    };
-    SS.video.mediaRecorder.start(1000);
-    SS.video.recording = true;
-    SS.video.seconds = 0;
-
-    /* Timer */
-    document.getElementById('scanRecTimer').style.display='';
-    document.getElementById('scanCamTxt').textContent='REC';
-    document.getElementById('scanCamTxt').style.color='#f44336';
-    SS.video.timerInterval = setInterval(function(){
-      SS.video.seconds++;
-      var m=Math.floor(SS.video.seconds/60), s=SS.video.seconds%60;
-      document.getElementById('scanRecTimer').textContent='&#x23FA; '+m+':'+(s<10?'0':'')+s;
-    }, 1000);
-
-    /* Inlocuieste butonul cu STOP */
-    var btn = document.querySelector('#sScanUI .scan-cam-btns .scan-btn:first-child');
-    if (btn) {
-      btn.textContent='⬛ STOP FILMARE';
-      btn.style.background='#c62828';
-      btn.style.borderColor='#f44336';
-      btn.onclick = scanStopRec360;
-    }
-    scanToastS('Filmare pornita! Inconjoara masina 360°','ok');
-  } catch(e) {
-    scanToastS('Eroare camera: '+e.message,'err');
-  }
+window.scanStartFilmare = function() {
+  /* Arata overlay inainte de filmare */
+  var overlay = document.getElementById('scanLidarOverlay');
+  var preview = document.getElementById('scanCamPreview');
+  if (overlay) overlay.style.display = '';
+  if (preview) preview.style.display = 'none';
+  /* Porneste simulare LiDAR activ */
+  var lidarSt = document.getElementById('lidarStatus');
+  if (lidarSt) { lidarSt.innerHTML='&#x1F7E2; ON'; SS.lidar.active=true; }
+  /* Timer pornit */
+  recSeconds=0;
+  if (recTimerInterval) clearInterval(recTimerInterval);
+  recTimerInterval = setInterval(function(){
+    recSeconds++;
+    var m=Math.floor(recSeconds/60), s=recSeconds%60;
+    var t=document.getElementById('overlayTimer');
+    if (t) t.textContent=m+':'+(s<10?'0':'')+s;
+  },1000);
+  /* iOS: deschide camera video nativa */
+  var inp = document.getElementById('scanVideoInput');
+  if (inp) inp.click();
 };
 
-window.scanStopRec360 = function() {
-  if (SS.video.mediaRecorder && SS.video.recording) {
-    SS.video.mediaRecorder.stop();
-    SS.video.recording = false;
-    clearInterval(SS.video.timerInterval);
-    document.getElementById('scanRecTimer').style.display='none';
-    document.getElementById('scanCamTxt').textContent='PROCESARE...';
-    document.getElementById('scanCamTxt').style.color='#ffc107';
-    scanToastS('Filmare oprita. Se proceseaza...','ok');
-    /* Restore buton */
-    var btn = document.querySelector('#sScanUI .scan-cam-btns .scan-btn:first-child');
-    if (btn) {
-      btn.innerHTML='&#x1F3A5; FILMARE 360&#xB0;';
-      btn.style.background='#1565c0'; btn.style.borderColor='#4fc3f7';
-      btn.onclick = scanStartRec360;
-    }
-  }
-};
-
-/* iOS: video incarca din input file */
 window.scanHandleVideoFile = function(e) {
+  if (recTimerInterval) clearInterval(recTimerInterval);
+  SS.lidar.active = false;
+  var overlay = document.getElementById('scanLidarOverlay');
+  var preview = document.getElementById('scanCamPreview');
+  if (overlay) overlay.style.display='none';
+  if (preview) {
+    preview.style.display='flex';
+    preview.innerHTML='<div style="font-size:26px;opacity:0.5">&#x23F3;</div>' +
+      '<p style="font-size:9px;color:#ffc107;font-family:monospace;text-align:center;padding:0 8px;margin:0;">Se proceseaza video...</p>';
+  }
   var file = e.target.files && e.target.files[0];
   if (!file) return;
   e.target.value='';
-  scanToastS('Video primit ('+( file.size/1024/1024).toFixed(1)+'MB). Se proceseaza...','ok');
+  /* Salveaza metadate dosar */
+  SS.meta.date = new Date().toLocaleDateString('ro-RO');
+  SS.meta.time = new Date().toLocaleTimeString('ro-RO');
+  SS.meta.plate = (document.getElementById('sScanPlate')||{}).value||'';
+  SS.meta.model = (document.getElementById('sScanModel')||{}).value||'';
+  SS.meta.color = (document.getElementById('sScanColor')||{}).value||'';
+  SS.meta.officer = (document.getElementById('sScanOfficer')||{}).value||'';
+  SS.meta.gpsLat = SS.gps.lat; SS.meta.gpsLng = SS.gps.lng; SS.meta.gpsAcc = SS.gps.acc;
+  SS.meta.duration = recSeconds;
+
+  scanToastS('Video primit '+( file.size/1024/1024).toFixed(1)+'MB. Se proceseaza...','ok');
   var url = URL.createObjectURL(file);
-  SS.video.blob = file;
-  scanProcessVideoFromURL(url, file.type);
+  scanProcessVideoFromURL(url);
 };
 
 window.scanHandlePhotoFile = function(e) {
@@ -3229,681 +3297,1000 @@ window.scanHandlePhotoFile = function(e) {
   reader.readAsDataURL(file);
 };
 
-window.scanHandleGallery = function(e) {
-  Array.from(e.target.files||[]).forEach(function(f){
-    var r=new FileReader();
-    r.onload=function(ev){ scanAddPhotoS(ev.target.result,f.name); };
-    r.readAsDataURL(f);
-  });
-  e.target.value='';
-};
-
 /* ═══════════════════════════════════════════════════
-   PROCESARE VIDEO — extragere frames + analiza daune
+   PROCESARE VIDEO → SCHITA TEHNICA
    ═══════════════════════════════════════════════════ */
-function scanProcessVideo(blob) {
-  var url = URL.createObjectURL(blob);
-  scanProcessVideoFromURL(url, blob.type);
-}
-
-function scanProcessVideoFromURL(url, mimeType) {
-  /* Arata progress in tab Procesare */
+function scanProcessVideoFromURL(url) {
   scanView('proc', document.querySelector('.scan-view-tab'));
-  var procEl = document.getElementById('sProcStatus');
-  if (procEl) procEl.innerHTML = buildProgressUI('Se incarca video...', 0);
+  var proc = document.getElementById('sProcStatus');
+  if (proc) proc.innerHTML = buildProgressUI('Se incarca video...', 0);
 
   var vid = document.createElement('video');
-  vid.src = url;
-  vid.muted = true;
-  vid.playsInline = true;
-  vid.crossOrigin = 'anonymous';
+  vid.src = url; vid.muted = true; vid.playsInline = true; vid.crossOrigin='anonymous';
 
   vid.onloadedmetadata = function() {
-    var duration = vid.duration;
-    var fps = 30;
-    /* Extragem 1 frame la fiecare 0.5 secunde — max 60 frames */
-    var interval = Math.max(0.5, duration / 60);
+    SS.video.duration = vid.duration;
+    var dur = vid.duration;
+    /* Extrage max 40 frames distribuite uniform pe durata video */
+    var nFrames = Math.min(40, Math.max(8, Math.floor(dur * 1.5)));
+    var interval = dur / nFrames;
     var times = [];
-    for (var t = 0; t < duration; t += interval) times.push(t);
+    for (var t = interval/2; t < dur; t += interval) times.push(parseFloat(t.toFixed(2)));
 
-    if (procEl) procEl.innerHTML = buildProgressUI('Se extrag frame-uri din ' + duration.toFixed(1) + 's video...', 5);
+    if (proc) proc.innerHTML = buildProgressUI('Video: '+dur.toFixed(1)+'s — extractie '+nFrames+' frames...', 5);
 
     extractFrames(vid, times, 0, [], function(frames) {
       SS.c3d.frames = frames;
-      if (procEl) procEl.innerHTML = buildProgressUI('Analiza daune pe ' + frames.length + ' frame-uri...', 50);
-
-      setTimeout(function() {
-        var damageMap = analyzeDamage(frames);
-        if (procEl) procEl.innerHTML = buildProgressUI('Generare harta 2D...', 70);
-        setTimeout(function() {
-          buildMap2D(frames, damageMap);
-          if (procEl) procEl.innerHTML = buildProgressUI('Generare model 3D...', 85);
-          setTimeout(function() {
-            buildModel3D(frames, damageMap);
-            applyDamageToSilhouette(damageMap);
-            if (procEl) procEl.innerHTML = buildDoneUI(frames.length, damageMap);
+      if (proc) proc.innerHTML = buildProgressUI('Analiza daune din '+frames.length+' frames...', 48);
+      setTimeout(function(){
+        var dmap = analyzeDamage(frames);
+        SS.processing.damageMap = dmap;
+        applyDamageToSilhouette(dmap);
+        if (proc) proc.innerHTML = buildProgressUI('Generare schema tehnica 2D...', 68);
+        setTimeout(function(){
+          scan2dInitS();
+          drawSchitaTehnica(frames, dmap);
+          if (proc) proc.innerHTML = buildProgressUI('Generare model 3D...', 84);
+          setTimeout(function(){
+            buildModel3D(frames, dmap);
+            SS.processing.done = true;
+            if (proc) proc.innerHTML = buildDoneUI(frames.length, dmap);
             URL.revokeObjectURL(url);
-            document.getElementById('scanCamTxt').textContent='GATA';
-            document.getElementById('scanCamTxt').style.color='#00e5ff';
-            scanToastS('Cartografiere completa! ' + frames.length + ' frames procesate','ok');
-          }, 500);
+            var preview = document.getElementById('scanCamPreview');
+            if (preview && frames.length > 0) {
+              preview.innerHTML='<img src="'+frames[Math.floor(frames.length/2)].dataUrl+'" style="width:100%;height:100%;object-fit:cover;display:block;">';
+            }
+            scanToastS('Cartografiere completa! '+frames.length+' frames','ok');
+          }, 400);
         }, 300);
       }, 200);
     });
   };
-
   vid.onerror = function() {
-    if (procEl) procEl.innerHTML = '<div style="color:#f44336;font-family:monospace;font-size:11px;text-align:center;padding:20px;">Eroare la incarcarea video.<br>Incearca din nou.</div>';
-    scanToastS('Eroare video','err');
+    if (proc) proc.innerHTML='<div style="color:#f44336;font-family:monospace;font-size:11px;text-align:center;padding:20px;">Eroare la incarcarea video. Incearca din nou.</div>';
   };
   vid.load();
 }
 
 function extractFrames(vid, times, idx, frames, done) {
   if (idx >= times.length) { done(frames); return; }
-  var procEl = document.getElementById('sProcStatus');
+  var proc = document.getElementById('sProcStatus');
   var pct = Math.round(5 + (idx/times.length)*40);
-  if (procEl) procEl.innerHTML = buildProgressUI('Frame ' + (idx+1) + '/' + times.length + '...', pct);
-
+  if (proc) proc.innerHTML = buildProgressUI('Frame '+(idx+1)+'/'+times.length+'...', pct);
   vid.currentTime = times[idx];
   vid.onseeked = function() {
     var cv = document.createElement('canvas');
-    cv.width = Math.min(vid.videoWidth || 640, 320);  /* resize pentru performanta */
-    cv.height = Math.min(vid.videoHeight || 480, 240);
+    /* Rezolutie mai mare pentru analiza mai buna */
+    cv.width = Math.min(vid.videoWidth||640, 480);
+    cv.height = Math.min(vid.videoHeight||480, 360);
     var ctx = cv.getContext('2d');
     try {
       ctx.drawImage(vid, 0, 0, cv.width, cv.height);
+      var imgData = ctx.getImageData(0, 0, cv.width, cv.height);
       frames.push({
         time: times[idx],
-        dataUrl: cv.toDataURL('image/jpeg', 0.7),
-        width: cv.width,
-        height: cv.height,
-        imageData: ctx.getImageData(0, 0, cv.width, cv.height)
+        dataUrl: cv.toDataURL('image/jpeg', 0.75),
+        w: cv.width, h: cv.height,
+        imageData: imgData
       });
-      /* Adauga la galerie */
-      scanAddPhotoS(frames[frames.length-1].dataUrl, 'Frame ' + (idx+1) + ' (' + times[idx].toFixed(1) + 's)');
-    } catch(e) { console.warn('Frame extract err:', e); }
+      scanAddPhotoS(frames[frames.length-1].dataUrl,
+        'Frame '+(idx+1)+' @'+times[idx].toFixed(1)+'s');
+    } catch(e) { console.warn('Frame err:', e); }
     extractFrames(vid, times, idx+1, frames, done);
   };
 }
 
-/* ── Analiza daune din pixeli ── */
+/* ── Analiza daune avansata ── */
 function analyzeDamage(frames) {
-  /* Detectam zone cu anomalii de culoare/contrast care indica daune */
-  /* Zona de interes: impartim fiecare frame in sectiuni si comparam cu media */
-  var damageMap = { fata:0, spate:0, dr:0, st:0, capota:0, portbagaj:0, acop:0 };
-  var counts = { fata:0, spate:0, dr:0, st:0, capota:0, portbagaj:0, acop:0 };
+  var nf = frames.length;
+  var zones = ['fata','spate','dr','st','capota','portbagaj','acop'];
+  var scores = {}; var counts = {};
+  zones.forEach(function(z){ scores[z]=0; counts[z]=0; });
 
   frames.forEach(function(frame, fi) {
     var data = frame.imageData ? frame.imageData.data : null;
     if (!data) return;
-    var W = frame.width, H = frame.height;
+    var W = frame.w, H = frame.h;
+    var pos = fi / nf; /* pozitia in tur 360 */
 
-    /* Impartim frame-ul in zone aproximative in functie de pozitia in tur 360 */
-    /* Estimam pozitia in tur dupa timpul frame-ului relativ la durata totala */
-    var totalFrames = frames.length;
-    var pos360 = fi / totalFrames; /* 0=fata, 0.25=dr, 0.5=spate, 0.75=st */
-
-    /* Calculeaza scor daune pentru frame: pixeli cu contrast/saturatie anormala */
-    var damageScore = 0;
-    var sampleStep = 4; /* analizam 1 din 4 pixeli */
-    for (var py = Math.floor(H*0.1); py < Math.floor(H*0.9); py += sampleStep) {
-      for (var px = Math.floor(W*0.1); px < Math.floor(W*0.9); px += sampleStep) {
-        var i = (py * W + px) * 4;
-        var r = data[i], g = data[i+1], b = data[i+2];
-        /* Detectare daune: zone cu contrast mare (zgarieturi) sau culori anormale */
-        var brightness = (r + g + b) / 3;
-        var saturation = Math.max(r,g,b) - Math.min(r,g,b);
-        /* Zgarieturi: zone foarte luminoase (reflexii metal expus) sau foarte intunecate (adancituri) */
-        var isDamage = (brightness > 220 && saturation < 30) || /* reflexie metal */
-                       (brightness < 40 && saturation < 20) ||  /* adancitura adanca */
-                       (r > 150 && g < 80 && b < 80);            /* rugina/rosie */
-        if (isDamage) damageScore++;
+    /* Impartim frame in regiuni si calculam scor daune */
+    function regionScore(x1p, y1p, x2p, y2p) {
+      var x1=Math.floor(W*x1p), y1=Math.floor(H*y1p);
+      var x2=Math.floor(W*x2p), y2=Math.floor(H*y2p);
+      var dmg=0, total=0;
+      /* Calculeaza gradient local pentru detectie zgarieturi/deformari */
+      for (var py=y1; py<y2-1; py+=3) {
+        for (var px=x1; px<x2-1; px+=3) {
+          var i=(py*W+px)*4;
+          var ir=((py+1)*W+px)*4;
+          var ic=(py*W+(px+1))*4;
+          var r=data[i],g=data[i+1],b=data[i+2];
+          /* Gradient vertical si orizontal */
+          var gv=Math.abs(r-data[ir])+Math.abs(g-data[ir+1])+Math.abs(b-data[ir+2]);
+          var gh=Math.abs(r-data[ic])+Math.abs(g-data[ic+1])+Math.abs(b-data[ic+2]);
+          var grad=(gv+gh)/6;
+          var brightness=(r+g+b)/3;
+          /* Daune: gradient mare (margini deformari) + luminozitate anormala */
+          var isReflection=(brightness>210&&Math.max(r,g,b)-Math.min(r,g,b)<30);
+          var isDent=(brightness<35);
+          var isRust=(r>120&&g<70&&b<70);
+          var isHighEdge=(grad>45);
+          if (isReflection||isDent||isRust||(isHighEdge&&(brightness<60||brightness>200))) dmg++;
+          total++;
+        }
       }
+      return total>0?dmg/total:0;
     }
-    var totalSampled = Math.floor((H*0.8/sampleStep)) * Math.floor((W*0.8/sampleStep));
-    var normalizedScore = damageScore / totalSampled;
 
-    /* Mapeaza pozitia in tur 360 la zona vehiculului */
-    if (pos360 < 0.12 || pos360 > 0.88) {
-      damageMap.fata += normalizedScore; counts.fata++;
-    } else if (pos360 < 0.38) {
-      damageMap.dr += normalizedScore; counts.dr++;
-    } else if (pos360 < 0.62) {
-      damageMap.spate += normalizedScore; counts.spate++;
-    } else if (pos360 < 0.88) {
-      damageMap.st += normalizedScore; counts.st++;
-    }
-    /* Capota/portbagaj/acoperis detectate din jumatatea superioara a frame-ului */
-    var topScore = 0, topSampled = 0;
-    for (var py2 = 0; py2 < Math.floor(H*0.35); py2 += sampleStep) {
-      for (var px2 = Math.floor(W*0.2); px2 < Math.floor(W*0.8); px2 += sampleStep) {
-        var i2 = (py2*W+px2)*4;
-        var b2 = (data[i2]+data[i2+1]+data[i2+2])/3;
-        var s2 = Math.max(data[i2],data[i2+1],data[i2+2])-Math.min(data[i2],data[i2+1],data[i2+2]);
-        if ((b2>210&&s2<25)||(b2<45&&s2<15)) topScore++;
-        topSampled++;
-      }
-    }
-    if (topSampled > 0) {
-      var topNorm = topScore/topSampled;
-      if (pos360 < 0.25 || pos360 > 0.75) { damageMap.capota += topNorm; counts.capota++; }
-      else { damageMap.portbagaj += topNorm; counts.portbagaj++; }
-      damageMap.acop += topNorm*0.5; counts.acop++;
-    }
+    /* Zona corpului masinii = 20%-80% latime, 15%-85% inaltime */
+    var bodyScore = regionScore(0.15, 0.15, 0.85, 0.82);
+
+    /* Mapeaza pozitia in tur la zona vehicul */
+    /* pos ~0 si ~1 = fata, ~0.25 = dr, ~0.5 = spate, ~0.75 = st */
+    var zone='', topZone='';
+    if (pos < 0.12 || pos > 0.88)      { zone='fata'; }
+    else if (pos < 0.38)                { zone='dr'; }
+    else if (pos < 0.62)                { zone='spate'; }
+    else                                { zone='st'; }
+
+    scores[zone] += bodyScore; counts[zone]++;
+
+    /* Top frame = capota/portbagaj/acoperis */
+    var topScore = regionScore(0.2, 0.05, 0.8, 0.35);
+    if (pos < 0.25 || pos > 0.75)      { scores.capota+=topScore; counts.capota++; }
+    else                                { scores.portbagaj+=topScore; counts.portbagaj++; }
+    scores.acop += topScore*0.4; counts.acop++;
   });
 
-  /* Normalizeaza si clasifica severitatea */
+  /* Clasificare cu praguri calibrate */
   var result = {};
-  var threshold = { minor:0.008, major:0.02, total:0.05 };
-  Object.keys(damageMap).forEach(function(zone) {
-    var avg = counts[zone] > 0 ? damageMap[zone] / counts[zone] : 0;
-    if (avg >= threshold.total) result[zone] = 'total';
-    else if (avg >= threshold.major) result[zone] = 'major';
-    else if (avg >= threshold.minor) result[zone] = 'minor';
-    /* else: fara daune detectate */
+  var T = { minor:0.012, major:0.028, total:0.055 };
+  zones.forEach(function(z) {
+    var avg = counts[z]>0 ? scores[z]/counts[z] : 0;
+    if      (avg >= T.total) result[z]='total';
+    else if (avg >= T.major) result[z]='major';
+    else if (avg >= T.minor) result[z]='minor';
   });
   return result;
 }
 
-/* ── Aplica daune pe silueta SVG ── */
-function applyDamageToSilhouette(damageMap) {
-  var colors = {
-    minor: ['rgba(255,193,7,0.35)','#ffc107'],
-    major: ['rgba(255,87,34,0.45)','#ff5722'],
-    total: ['rgba(244,67,54,0.55)','#f44336']
-  };
-  var zoneMap = { fata:'sdz-fata', spate:'sdz-spate', dr:'sdz-dr', st:'sdz-st',
-                  capota:'sdz-capota', portbagaj:'sdz-portbagaj', acop:'sdz-acop' };
-
-  Object.keys(damageMap).forEach(function(zone) {
-    var sev = damageMap[zone];
-    var el = document.getElementById(zoneMap[zone]);
-    if (el && sev) {
-      el.setAttribute('fill', colors[sev][0]);
-      el.setAttribute('stroke', colors[sev][1]);
-      SS.zones[zoneMap[zone]] = sev;
-    }
-  });
-  updateZoneList();
-}
-
-function updateZoneList() {
-  var list = document.getElementById('sScanZoneList');
-  if (!list) return;
-  var entries = Object.entries(SS.zones);
-  if (!entries.length) { list.innerHTML='-- Nicio zona --'; return; }
-  list.innerHTML = entries.map(function(e){
-    var el = document.getElementById(e[0]);
-    var n = el&&el.dataset ? el.dataset.zone : e[0];
-    var colors = {minor:'#ffc107',major:'#ff5722',total:'#f44336'};
-    return '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1a2f4a;">' +
-      '<span>'+n+'</span><span style="color:'+colors[e[1]]+'">'+e[1].toUpperCase()+'</span></div>';
-  }).join('');
-}
-
-/* ── Harta 2D din frames ── */
-function buildMap2D(frames, damageMap) {
-  var tabBtn = document.querySelectorAll('.scan-view-tab')[1];
-  scanView('2d', tabBtn);
-  scan2dInitS();
-  if (!c2 || !x2) return;
-
-  /* Fundalul = frame din centru (spate masina) */
-  var midFrame = frames[Math.floor(frames.length/2)];
-  if (midFrame) {
-    var img = new Image();
-    img.onload = function() {
-      /* Deseneaza frame-ul ca fundal cu transparenta */
-      x2.save();
-      x2.globalAlpha = 0.15;
-      x2.drawImage(img, 0, 0, c2.width, c2.height);
-      x2.restore();
-      draw2DMap(damageMap);
-    };
-    img.src = midFrame.dataUrl;
-  } else {
-    draw2DMap(damageMap);
-  }
-}
-
-function draw2DMap(damageMap) {
-  if (!c2 || !x2) return;
+/* ═══════════════════════════════════════════════════
+   SCHITA TEHNICA STIL POLITIE RUTIERA
+   ═══════════════════════════════════════════════════ */
+function drawSchitaTehnica(frames, dmap) {
+  if (!c2 || !x2) { scan2dInitS(); if(!c2||!x2) return; }
   var W = c2.width, H = c2.height;
-  var cx = W/2, cy = H/2;
 
-  /* Grid */
-  x2.strokeStyle='rgba(0,229,255,0.05)';x2.lineWidth=1;
-  for(var i=0;i<W;i+=25){x2.beginPath();x2.moveTo(i,0);x2.lineTo(i,H);x2.stroke();}
-  for(var j=0;j<H;j+=25){x2.beginPath();x2.moveTo(0,j);x2.lineTo(W,j);x2.stroke();}
+  /* Reset complet canvas */
+  x2.clearRect(0,0,W,H);
 
-  /* Silueta masina 2D top-view */
-  var scaleX = Math.min(W,H) * 0.35;
-  var scaleY = scaleX * 0.45;
+  /* ── FUNDAL ALB stil tehnic ── */
+  x2.fillStyle = '#f8f9fa';
+  x2.fillRect(0,0,W,H);
+
+  /* ── CADRU DOSAR ── */
+  x2.strokeStyle = '#1a237e';
+  x2.lineWidth = 2;
+  x2.strokeRect(4,4,W-8,H-8);
+  x2.strokeStyle = '#1a237e';
+  x2.lineWidth = 0.5;
+  x2.strokeRect(8,8,W-16,H-16);
+
+  /* ── HEADER ── */
+  var hH = 52;
+  x2.fillStyle = '#1a237e';
+  x2.fillRect(8,8,W-16,hH);
+  x2.fillStyle = '#ffffff';
+  x2.font = 'bold 11px monospace';
+  x2.textAlign = 'center';
+  x2.fillText('SCHEMA TEHNICA VEHICUL AVARIAT — BIROUL RUTIER', W/2, 24);
+  x2.font = '9px monospace';
+  var metaLine = '';
+  if (SS.meta.plate) metaLine += 'NR: '+SS.meta.plate+'   ';
+  if (SS.meta.model) metaLine += SS.meta.model+'   ';
+  if (SS.meta.color) metaLine += SS.meta.color;
+  x2.fillText(metaLine, W/2, 38);
+  x2.font = '8px monospace';
+  x2.fillStyle = '#b3e5fc';
+  var dateLine = SS.meta.date+'  '+SS.meta.time;
+  if (SS.meta.officer) dateLine += '   OFITER: '+SS.meta.officer.toUpperCase();
+  x2.fillText(dateLine, W/2, 50);
+
+  /* ── GPS / COORDONATE ── */
+  x2.textAlign = 'left';
+  x2.font = '7.5px monospace';
+  x2.fillStyle = '#546e7a';
+  var gpsY = 70;
+  if (SS.meta.gpsLat) {
+    x2.fillStyle = '#2e7d32';
+    x2.fillText('GPS: '+SS.meta.gpsLat.toFixed(6)+', '+SS.meta.gpsLng.toFixed(6)+
+      ' (±'+SS.meta.gpsAcc.toFixed(0)+'m)', 12, gpsY);
+  }
+  x2.fillStyle = '#546e7a';
+  x2.fillText('Frames procesate: '+frames.length+'  |  Durata filmare: '+
+    Math.floor(SS.meta.duration/60)+'m '+( SS.meta.duration%60)+'s  |  LiDAR: '+
+    (DEVICE.hasLiDAR?'ACTIV':'N/A'), 12, gpsY+11);
+
+  /* ── ZONA DESENARE MASINA ── */
+  var drawY = gpsY + 22;
+  var drawH = H - drawY - 40;
+  var drawW = W - 16;
+
+  /* VEDERE TOP (sus 55% din zona de desenare) */
+  var topH = Math.floor(drawH * 0.56);
+  var topY = drawY;
+  /* VEDERE LATERAL (jos 44%) */
+  var sideH = drawH - topH - 6;
+  var sideY = topY + topH + 6;
+
+  /* Separator */
+  x2.strokeStyle = '#90a4ae';
+  x2.lineWidth = 0.5;
+  x2.setLineDash([4,3]);
+  x2.beginPath(); x2.moveTo(12,topY+topH+3); x2.lineTo(W-12,topY+topH+3); x2.stroke();
+  x2.setLineDash([]);
+
+  /* Label vederi */
+  x2.font = 'bold 7.5px monospace'; x2.fillStyle = '#37474f'; x2.textAlign = 'left';
+  x2.fillText('VEDERE DE SUS (TOP VIEW)', 14, topY+10);
+  x2.fillText('VEDERE LATERAL DREAPTA / LATERAL STANGA', 14, sideY+10);
+
+  /* ── TOP VIEW ── */
+  drawTopView(x2, 12, topY+12, drawW, topH-14, dmap, frames);
+
+  /* ── SIDE VIEW ── */
+  drawSideView(x2, 12, sideY+12, drawW, sideH-14, dmap, frames);
+
+  /* ── LEGENDA ── */
+  drawLegenda(x2, W, H);
+
+  /* ── SEMNATURA / STAMPILA ── */
+  drawFooter(x2, W, H);
+
+  /* Restaureaza obiecte desenate manual */
+  SS.c2d.objs.forEach(function(o){ scan2dDrawS(o); });
+}
+
+function drawTopView(ctx, x, y, w, h, dmap, frames) {
+  var cx = x + w/2, cy = y + h/2;
+  var carW = Math.min(w*0.38, h*1.1);
+  var carH = carW * 0.48;
+
+  /* Grid tehnic */
+  ctx.strokeStyle = 'rgba(100,181,246,0.12)';
+  ctx.lineWidth = 0.5;
+  var gs = 20;
+  for (var gx=x; gx<x+w; gx+=gs) { ctx.beginPath();ctx.moveTo(gx,y);ctx.lineTo(gx,y+h);ctx.stroke(); }
+  for (var gy=y; gy<y+h; gy+=gs) { ctx.beginPath();ctx.moveTo(x,gy);ctx.lineTo(x+w,gy);ctx.stroke(); }
 
   /* Caroserie */
-  x2.strokeStyle='rgba(0,229,255,0.6)';x2.lineWidth=2;
-  x2.beginPath();
-  x2.roundRect ? x2.roundRect(cx-scaleX, cy-scaleY, scaleX*2, scaleY*2, 15) :
-    x2.rect(cx-scaleX, cy-scaleY, scaleX*2, scaleY*2);
-  x2.stroke();
+  ctx.strokeStyle = '#1a237e'; ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(200,210,240,0.3)';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(cx-carW, cy-carH, carW*2, carH*2, 12);
+  else ctx.rect(cx-carW, cy-carH, carW*2, carH*2);
+  ctx.fill(); ctx.stroke();
 
   /* Habitaclu */
-  x2.strokeStyle='rgba(0,229,255,0.4)';x2.lineWidth=1.5;
-  x2.beginPath();
-  x2.rect(cx-scaleX*0.45, cy-scaleY*0.7, scaleX*0.9, scaleY*1.4);
-  x2.stroke();
+  ctx.strokeStyle = '#283593'; ctx.lineWidth = 1.5;
+  ctx.fillStyle = 'rgba(150,160,200,0.25)';
+  ctx.beginPath();
+  ctx.rect(cx-carW*0.42, cy-carH*0.68, carW*0.84, carH*1.36);
+  ctx.fill(); ctx.stroke();
+
+  /* Ferestre */
+  ctx.fillStyle = 'rgba(100,181,246,0.2)';
+  ctx.strokeStyle = '#5c6bc0'; ctx.lineWidth=0.8;
+  [[-0.2, -0.58, 0.35, 0.55],[ 0.04, -0.58, 0.35, 0.55]].forEach(function(f){
+    ctx.beginPath();ctx.rect(cx+f[0]*carW,cy+f[1]*carH,f[2]*carW,f[3]*carH*2);ctx.fill();ctx.stroke();
+  });
 
   /* Roți */
-  var wheelW=scaleX*0.18, wheelH=scaleY*0.25;
-  [[-0.75,-0.9],[-0.75,0.9],[0.75,-0.9],[0.75,0.9]].forEach(function(w){
-    x2.strokeStyle='rgba(0,229,255,0.5)';x2.lineWidth=2;
-    x2.beginPath();x2.ellipse(cx+w[0]*scaleX, cy+w[1]*scaleY, wheelW, wheelH, 0, 0, Math.PI*2);x2.stroke();
+  ctx.fillStyle='#37474f'; ctx.strokeStyle='#1a237e'; ctx.lineWidth=1.5;
+  var ww=carW*0.14, wh=carH*0.26;
+  [[-0.72,-0.82],[-0.72,0.82],[0.72,-0.82],[0.72,0.82]].forEach(function(w){
+    ctx.beginPath();ctx.ellipse(cx+w[0]*carW,cy+w[1]*carH,wh,ww,0,0,Math.PI*2);ctx.fill();ctx.stroke();
   });
 
   /* Faruri */
-  x2.fillStyle='rgba(255,255,150,0.6)';
-  [[scaleX-5,-scaleY*0.5],[scaleX-5,scaleY*0.5]].forEach(function(f){
-    x2.beginPath();x2.arc(cx+f[0],cy+f[1],6,0,Math.PI*2);x2.fill();
+  ctx.fillStyle='rgba(255,255,150,0.8)'; ctx.strokeStyle='#f9a825'; ctx.lineWidth=1;
+  [[carW-3,-carH*0.45],[carW-3,carH*0.45]].forEach(function(f){
+    ctx.beginPath();ctx.ellipse(cx+f[0],cy+f[1],5,4,0,0,Math.PI*2);ctx.fill();ctx.stroke();
   });
 
-  /* Zone daune */
-  var zoneColors={minor:'rgba(255,193,7,0.5)',major:'rgba(255,87,34,0.6)',total:'rgba(244,67,54,0.7)'};
-  var zonePosMap={
-    fata:    {x:cx+scaleX*0.85, y:cy, w:scaleX*0.25, h:scaleY*1.2},
-    spate:   {x:cx-scaleX*0.85, y:cy, w:scaleX*0.25, h:scaleY*1.2},
-    dr:      {x:cx, y:cy+scaleY*0.85, w:scaleX*1.4, h:scaleY*0.25},
-    st:      {x:cx, y:cy-scaleY*0.85, w:scaleX*1.4, h:scaleY*0.25},
-    capota:  {x:cx+scaleX*0.45, y:cy, w:scaleX*0.7, h:scaleY*0.8},
-    portbagaj:{x:cx-scaleX*0.45, y:cy, w:scaleX*0.7, h:scaleY*0.8},
-    acop:    {x:cx, y:cy, w:scaleX*0.8, h:scaleY*0.7}
+  /* Stopuri spate */
+  ctx.fillStyle='rgba(244,67,54,0.8)'; ctx.strokeStyle='#c62828'; ctx.lineWidth=1;
+  [[-carW+3,-carH*0.45],[-carW+3,carH*0.45]].forEach(function(f){
+    ctx.beginPath();ctx.ellipse(cx+f[0],cy+f[1],5,4,0,0,Math.PI*2);ctx.fill();ctx.stroke();
+  });
+
+  /* Zone daune cu hasuare tehnica */
+  var sevColors = { minor:['rgba(255,193,7,0.5)','#f9a825'], major:['rgba(255,87,34,0.55)','#e64a19'], total:['rgba(244,67,54,0.6)','#c62828'] };
+  var sevHatch  = { minor:'////', major:'XXXX', total:'####' };
+  var zoneRects = {
+    fata:      {rx:cx+carW*0.82, ry:cy, rw:carW*0.26, rh:carH*1.3},
+    spate:     {rx:cx-carW*0.82, ry:cy, rw:carW*0.26, rh:carH*1.3},
+    dr:        {rx:cx, ry:cy+carH*0.82, rw:carW*1.5, rh:carH*0.28},
+    st:        {rx:cx, ry:cy-carH*0.82, rw:carW*1.5, rh:carH*0.28},
+    capota:    {rx:cx+carW*0.38, ry:cy, rw:carW*0.7, rh:carH*0.9},
+    portbagaj: {rx:cx-carW*0.38, ry:cy, rw:carW*0.7, rh:carH*0.9},
+    acop:      {rx:cx, ry:cy, rw:carW*0.78, rh:carH*0.65}
   };
 
-  Object.entries(damageMap).forEach(function(entry) {
+  Object.entries(dmap).forEach(function(entry) {
     var zone=entry[0], sev=entry[1];
-    var pos=zonePosMap[zone];
-    if (!pos||!sev) return;
-    x2.fillStyle=zoneColors[sev];
-    x2.strokeStyle=sev==='minor'?'#ffc107':sev==='major'?'#ff5722':'#f44336';
-    x2.lineWidth=2;
-    x2.beginPath();
-    x2.ellipse(pos.x, pos.y, pos.w/2, pos.h/2, 0, 0, Math.PI*2);
-    x2.fill(); x2.stroke();
-    /* Label */
-    x2.fillStyle=sev==='minor'?'#ffc107':sev==='major'?'#ff5722':'#f44336';
-    x2.font='bold 10px monospace';
-    x2.textAlign='center';
-    x2.fillText(zone.toUpperCase(), pos.x, pos.y+3);
-    x2.textAlign='left';
+    var zr=zoneRects[zone]; if(!zr||!sev) return;
+    var sc=sevColors[sev];
+    /* Hasuara */
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(zr.rx,zr.ry,zr.rw/2,zr.rh/2,0,0,Math.PI*2);
+    ctx.clip();
+    ctx.fillStyle=sc[0]; ctx.fill();
+    /* Hasuare tehnica */
+    ctx.strokeStyle=sc[1]; ctx.lineWidth=0.8;
+    for (var hi=-Math.max(zr.rw,zr.rh); hi<Math.max(zr.rw,zr.rh); hi+=6) {
+      if (sev==='total') {
+        ctx.beginPath();ctx.moveTo(zr.rx+hi,zr.ry-zr.rh);ctx.lineTo(zr.rx+hi,zr.ry+zr.rh);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(zr.rx-zr.rw,zr.ry+hi);ctx.lineTo(zr.rx+zr.rw,zr.ry+hi);ctx.stroke();
+      } else if (sev==='major') {
+        ctx.beginPath();ctx.moveTo(zr.rx-zr.rw/2+hi,zr.ry-zr.rh);ctx.lineTo(zr.rx+hi,zr.ry+zr.rh);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(zr.rx+hi,zr.ry-zr.rh);ctx.lineTo(zr.rx-zr.rw/2+hi,zr.ry+zr.rh);ctx.stroke();
+      } else {
+        ctx.beginPath();ctx.moveTo(zr.rx-zr.rw/2+hi,zr.ry-zr.rh);ctx.lineTo(zr.rx+hi,zr.ry+zr.rh);ctx.stroke();
+      }
+    }
+    ctx.restore();
+    /* Contur */
+    ctx.beginPath(); ctx.ellipse(zr.rx,zr.ry,zr.rw/2,zr.rh/2,0,0,Math.PI*2);
+    ctx.strokeStyle=sc[1]; ctx.lineWidth=1.5; ctx.stroke();
+    /* Label zona */
+    ctx.fillStyle=sc[1]; ctx.font='bold 8px monospace'; ctx.textAlign='center';
+    ctx.fillText(zone.toUpperCase(),zr.rx,zr.ry-3);
+    ctx.font='7px monospace'; ctx.fillStyle='#333';
+    ctx.fillText(sev.toUpperCase(),zr.rx,zr.ry+8);
+    ctx.textAlign='left';
   });
 
-  /* Label vehicul */
-  x2.fillStyle='rgba(0,229,255,0.7)';x2.font='9px monospace';
-  x2.fillText('VEDERE DE SUS — AUTO GENERAT DIN VIDEO 360°', 8, 14);
-  var plate=document.getElementById('sScanPlate');
-  if(plate&&plate.value) x2.fillText('NR: '+plate.value, 8, 26);
+  /* Cote dimensionale */
+  drawDimension(ctx, cx-carW, cy-carH-12, cx+carW, cy-carH-12, '~4.5m', '#546e7a');
+  drawDimension(ctx, cx+carW+12, cy-carH, cx+carW+12, cy+carH, '~1.8m', '#546e7a');
 
-  scan2dUpdateCount();
+  /* Busola N */
+  ctx.fillStyle='#1a237e'; ctx.font='bold 9px monospace'; ctx.textAlign='right';
+  ctx.fillText('N &#x2191;', x+w-5, y+20);
+  ctx.textAlign='left';
 }
 
-/* ── Model 3D din frames ── */
-function buildModel3D(frames, damageMap) {
-  var ph=document.getElementById('sPlaceholder3d');
-  if(ph) ph.style.display='none';
-  if(SS.c3d.raf) cancelAnimationFrame(SS.c3d.raf);
+function drawSideView(ctx, x, y, w, h, dmap, frames) {
+  var cx = x+w/2, cy = y+h/2;
+  var carL = Math.min(w*0.42, h*2.2);
+  var carH2 = carL * 0.32;
 
-  var cv=document.getElementById('sScanCanvas3D');
-  if(!cv) return;
-  var ctx=cv.getContext('2d');
-  var ang=0;
+  /* Grid */
+  ctx.strokeStyle='rgba(100,181,246,0.1)'; ctx.lineWidth=0.4;
+  for (var gx=x; gx<x+w; gx+=20) {ctx.beginPath();ctx.moveTo(gx,y);ctx.lineTo(gx,y+h);ctx.stroke();}
+  for (var gy=y; gy<y+h; gy+=20) {ctx.beginPath();ctx.moveTo(x,gy);ctx.lineTo(x+w,gy);ctx.stroke();}
 
-  /* Pregatim texturile din frames */
-  var texImages = [];
-  var loadCount = 0;
-  var framesToUse = frames.filter(function(_,i){ return i % Math.max(1,Math.floor(frames.length/8)) === 0; }).slice(0,8);
+  /* Caroserie laterala */
+  ctx.strokeStyle='#1a237e'; ctx.lineWidth=1.8;
+  ctx.fillStyle='rgba(200,210,240,0.35)';
+
+  /* Trapez masina */
+  var bL=cx-carL, bR=cx+carL, bY=cy+carH2;
+  var tL=cx-carL*0.6, tR=cx+carL*0.55, tY=cy-carH2;
+  ctx.beginPath();
+  ctx.moveTo(bL,bY); ctx.lineTo(bR,bY);
+  ctx.lineTo(bR,cy); ctx.lineTo(tR,tY);
+  ctx.lineTo(tL,tY); ctx.lineTo(bL,cy);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  /* Ferestre laterale */
+  ctx.fillStyle='rgba(100,181,246,0.25)'; ctx.strokeStyle='#5c6bc0'; ctx.lineWidth=0.8;
+  ctx.beginPath();
+  ctx.moveTo(bL+carL*0.15, cy);
+  ctx.lineTo(tL+carL*0.1, tY+5);
+  ctx.lineTo(tR-carL*0.15, tY+5);
+  ctx.lineTo(bR-carL*0.18, cy);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  /* Roți */
+  ctx.fillStyle='#37474f'; ctx.strokeStyle='#1a237e'; ctx.lineWidth=1.5;
+  var wr = carH2*0.42;
+  [[bL+carL*0.2, bY],[bR-carL*0.2, bY]].forEach(function(w){
+    ctx.beginPath(); ctx.arc(w[0],w[1],wr,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(w[0],w[1],wr*0.45,0,Math.PI*2);
+    ctx.fillStyle='#78909c'; ctx.fill(); ctx.fillStyle='#37474f';
+  });
+
+  /* Fanta usa */
+  ctx.strokeStyle='#546e7a'; ctx.lineWidth=0.8;
+  ctx.beginPath(); ctx.moveTo(cx-carL*0.08, tY+10); ctx.lineTo(cx-carL*0.08, bY-wr*0.5);
+  ctx.stroke();
+
+  /* Zone daune lateral */
+  var sevColors2 = { minor:['rgba(255,193,7,0.5)','#f9a825'], major:['rgba(255,87,34,0.55)','#e64a19'], total:['rgba(244,67,54,0.6)','#c62828'] };
+
+  if (dmap.fata) {
+    drawDmgZoneSide(ctx, bR-carL*0.05, cy, carL*0.16, carH2*1.1, dmap.fata, sevColors2, 'FATA');
+  }
+  if (dmap.spate) {
+    drawDmgZoneSide(ctx, bL+carL*0.05, cy, carL*0.16, carH2*1.1, dmap.spate, sevColors2, 'SPATE');
+  }
+  if (dmap.dr) {
+    drawDmgZoneSide(ctx, cx, bY-carH2*0.3, carL*1.0, carH2*0.35, dmap.dr, sevColors2, 'LAT.DR');
+  }
+  if (dmap.capota) {
+    drawDmgZoneSide(ctx, cx+carL*0.4, cy-carH2*0.6, carL*0.45, carH2*0.5, dmap.capota, sevColors2, 'CAPOTA');
+  }
+  if (dmap.portbagaj) {
+    drawDmgZoneSide(ctx, cx-carL*0.5, cy-carH2*0.4, carL*0.3, carH2*0.6, dmap.portbagaj, sevColors2, 'PORTBAG.');
+  }
+
+  /* Cota inaltime */
+  drawDimension(ctx, bR+carL*0.08, bY, bR+carL*0.08, tY, '~1.5m', '#546e7a');
+  drawDimension(ctx, bL, bY+wr*0.6, bR, bY+wr*0.6, '~4.5m', '#546e7a');
+}
+
+function drawDmgZoneSide(ctx, rx, ry, rw, rh, sev, sc, label) {
+  var c = sc[sev];
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(rx, ry, rw/2, rh/2, 0, 0, Math.PI*2); ctx.clip();
+  ctx.fillStyle=c[0]; ctx.fill();
+  ctx.strokeStyle=c[1]; ctx.lineWidth=0.8;
+  for (var hi=-Math.max(rw,rh); hi<Math.max(rw,rh); hi+=5) {
+    if (sev==='total') {
+      ctx.beginPath();ctx.moveTo(rx+hi,ry-rh);ctx.lineTo(rx+hi,ry+rh);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(rx-rw,ry+hi);ctx.lineTo(rx+rw,ry+hi);ctx.stroke();
+    } else {
+      ctx.beginPath();ctx.moveTo(rx-rw/2+hi,ry-rh);ctx.lineTo(rx+hi,ry+rh);ctx.stroke();
+    }
+  }
+  ctx.restore();
+  ctx.beginPath(); ctx.ellipse(rx,ry,rw/2,rh/2,0,0,Math.PI*2);
+  ctx.strokeStyle=c[1]; ctx.lineWidth=1.2; ctx.stroke();
+  ctx.fillStyle=c[1]; ctx.font='bold 7px monospace'; ctx.textAlign='center';
+  ctx.fillText(label, rx, ry+3);
+  ctx.textAlign='left';
+}
+
+function drawDimension(ctx, x1, y1, x2, y2, label, color) {
+  ctx.strokeStyle=color||'#90a4ae'; ctx.lineWidth=0.8; ctx.fillStyle=color||'#90a4ae';
+  ctx.font='7px monospace'; ctx.textAlign='center';
+  /* Linie principala */
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+  /* Markere capat */
+  var dx=x2-x1, dy=y2-y1, len=Math.sqrt(dx*dx+dy*dy);
+  if (len < 1) return;
+  var nx=dx/len, ny=dy/len, px=-ny, py=nx;
+  var as=5;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x1+nx*as+px*as,y1+ny*as+py*as); ctx.lineTo(x1+nx*as-px*as,y1+ny*as-py*as); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x2,y2); ctx.lineTo(x2-nx*as+px*as,y2-ny*as+py*as); ctx.lineTo(x2-nx*as-px*as,y2-ny*as-py*as); ctx.closePath(); ctx.fill();
+  /* Label */
+  ctx.fillText(label, (x1+x2)/2+py*10, (y1+y2)/2+py*10+3);
+  ctx.textAlign='left';
+}
+
+function drawLegenda(ctx, W, H) {
+  var lx=W-130, ly=H-82, lw=122, lh=70;
+  ctx.fillStyle='rgba(248,249,250,0.95)';
+  ctx.strokeStyle='#1a237e'; ctx.lineWidth=1;
+  ctx.fillRect(lx,ly,lw,lh); ctx.strokeRect(lx,ly,lw,lh);
+  ctx.fillStyle='#1a237e'; ctx.font='bold 8px monospace'; ctx.textAlign='left';
+  ctx.fillText('LEGENDA DAUNE:', lx+4, ly+12);
+  var items = [
+    ['rgba(255,193,7,0.7)','#f9a825','/// Minor — zgarieturi / vopsea'],
+    ['rgba(255,87,34,0.7)','#e64a19','XX Major — deformare / impact'],
+    ['rgba(244,67,54,0.7)','#c62828','## Total — distrugere severa']
+  ];
+  items.forEach(function(item, i) {
+    var iy = ly + 22 + i*16;
+    ctx.fillStyle=item[0]; ctx.fillRect(lx+4, iy-7, 14, 10);
+    ctx.strokeStyle=item[1]; ctx.lineWidth=0.8; ctx.strokeRect(lx+4,iy-7,14,10);
+    ctx.fillStyle='#333'; ctx.font='7.5px monospace';
+    ctx.fillText(item[2], lx+21, iy+1);
+  });
+  ctx.textAlign='left';
+}
+
+function drawFooter(ctx, W, H) {
+  var fy = H-12;
+  ctx.fillStyle='#546e7a'; ctx.font='7px monospace'; ctx.textAlign='left';
+  ctx.fillText('Generat automat din video 360° cu sistem LiDAR iPhone Pro | ScetchACC v4.0 | Biroul Rutier Arad', 12, fy);
+  ctx.textAlign='right';
+  if (SS.meta.plate) ctx.fillText('NR: '+SS.meta.plate, W-12, fy);
+  ctx.textAlign='left';
+}
+
+/* Regenereaza schita tehnica */
+window.schitaRegen = function() {
+  if (SS.c3d.frames.length > 0) {
+    drawSchitaTehnica(SS.c3d.frames, SS.processing.damageMap);
+    scanToastS('Schita regenerata!','ok');
+  } else {
+    scanToastS('Filmeaza mai intai vehiculul.','err');
+  }
+};
+
+/* ═══════════════════════════════════════════════════
+   MODEL 3D
+   ═══════════════════════════════════════════════════ */
+var rotSpeed = 0.4;
+window.scan3dRotSpeed = function(dir) {
+  rotSpeed = Math.max(0.1, Math.min(2.0, rotSpeed + dir*0.15));
+};
+
+function buildModel3D(frames, dmap) {
+  var ph = document.getElementById('sPlaceholder3d');
+  if (ph) ph.style.display='none';
+  if (SS.c3d.raf) cancelAnimationFrame(SS.c3d.raf);
+  var cv = document.getElementById('sScanCanvas3D');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+
+  /* Pregatire texturi */
+  var texImgs = [];
+  var nTex = 8;
+  var step = Math.max(1, Math.floor(frames.length/nTex));
+  var toLoad = frames.filter(function(_,i){ return i%step===0; }).slice(0,nTex);
+  var loaded = 0;
 
   function startAnim() {
+    var ang = 0;
     var zones = Object.entries(SS.zones);
-    var W, H;
-
     function frame() {
-      W = cv.offsetWidth||400; H = cv.offsetHeight||320;
+      var W=cv.offsetWidth||400, H=cv.offsetHeight||320;
       cv.width=W; cv.height=H;
       ctx.fillStyle='#050c1a'; ctx.fillRect(0,0,W,H);
 
       /* Grid podea */
-      ctx.strokeStyle='rgba(0,229,255,0.04)'; ctx.lineWidth=1;
-      var gS=30;
-      for(var gi=-8;gi<=8;gi++){
-        var gx=W/2+gi*gS*0.9+ang*0.3; var gy1=H*0.55; var gy2=H;
-        ctx.beginPath();ctx.moveTo(gx,gy1);ctx.lineTo(W/2+gi*gS*1.8,H);ctx.stroke();
+      var rot = ang*Math.PI/180;
+      ctx.strokeStyle='rgba(0,229,255,0.04)'; ctx.lineWidth=0.8;
+      for (var gi=-8;gi<=8;gi++){
+        ctx.beginPath();ctx.moveTo(W/2+gi*28*0.9,H*0.55);ctx.lineTo(W/2+gi*28*1.8,H);ctx.stroke();
       }
-      for(var gj=0;gj<=5;gj++){
-        var t=gj/5; var gy=H*0.55+t*(H*0.45);
-        ctx.beginPath();ctx.moveTo(W/2-gS*7*(1+t),gy);ctx.lineTo(W/2+gS*7*(1+t),gy);ctx.stroke();
+      for (var gj=0;gj<=5;gj++){
+        var t=gj/5;
+        ctx.beginPath();ctx.moveTo(W/2-28*7*(1+t),H*0.55+t*(H*0.45));ctx.lineTo(W/2+28*7*(1+t),H*0.55+t*(H*0.45));ctx.stroke();
       }
 
-      /* Perspectiva isometrica */
-      var rot=ang*Math.PI/180;
-      var sc=Math.min(W,H)*0.0032;
-
+      var sc = Math.min(W,H)*0.003;
       function proj(x,y,z){
         var rx=x*Math.cos(rot)-z*Math.sin(rot);
         var rz=x*Math.sin(rot)+z*Math.cos(rot);
-        return {px:W/2+rx*sc*80+rz*sc*28, py:H*0.44-y*sc*70+rz*sc*14};
+        return {px:W/2+rx*sc*78+rz*sc*26, py:H*0.43-y*sc*68+rz*sc*13};
       }
-
       function fc(n){
         for(var zi=0;zi<zones.length;zi++){
           var el=document.getElementById(zones[zi][0]);
           if(el&&el.dataset&&el.dataset.zone&&el.dataset.zone.toLowerCase().indexOf(n.toLowerCase())>=0){
             var sv=zones[zi][1];
-            return sv==='minor'?'rgba(255,193,7,0.45)':sv==='major'?'rgba(255,87,34,0.55)':'rgba(244,67,54,0.65)';
+            return sv==='minor'?'rgba(255,193,7,0.5)':sv==='major'?'rgba(255,87,34,0.6)':'rgba(244,67,54,0.7)';
           }
         }
         return null;
       }
-
-      function face(pts,defaultCol,texIdx,al){
-        ctx.beginPath();
-        ctx.moveTo(pts[0].px,pts[0].py);
+      function face(pts,defCol,texI,al){
+        ctx.beginPath();ctx.moveTo(pts[0].px,pts[0].py);
         for(var fi=1;fi<pts.length;fi++) ctx.lineTo(pts[fi].px,pts[fi].py);
         ctx.closePath();
-
-        /* Textura din frame daca disponibila */
-        if(texImages[texIdx||0] && texImages[texIdx||0].complete) {
-          try {
-            ctx.save();
-            ctx.clip();
-            var minX=pts[0].px,maxX=pts[0].px,minY=pts[0].py,maxY=pts[0].py;
-            pts.forEach(function(p){minX=Math.min(minX,p.px);maxX=Math.max(maxX,p.px);minY=Math.min(minY,p.py);maxY=Math.max(maxY,p.py);});
-            ctx.globalAlpha=(al||0.85)*0.7;
-            ctx.drawImage(texImages[texIdx||0],minX,minY,maxX-minX,maxY-minY);
+        /* Textura */
+        if(texImgs[texI||0]&&texImgs[texI||0].complete){
+          try{
+            ctx.save();ctx.clip();
+            var mx=pts[0].px,mn=pts[0].px,my=pts[0].py,myn=pts[0].py;
+            pts.forEach(function(p){mx=Math.max(mx,p.px);mn=Math.min(mn,p.px);my=Math.max(my,p.py);myn=Math.min(myn,p.py);});
+            ctx.globalAlpha=(al||0.85)*0.65;
+            ctx.drawImage(texImgs[texI||0],mn,myn,mx-mn,my-myn);
             ctx.restore();
-          } catch(e){}
+          }catch(e){}
         }
-
-        ctx.fillStyle=defaultCol||'rgba(13,31,58,0.85)';
-        ctx.globalAlpha=(al||0.85)*0.5;
-        ctx.fill();
+        ctx.fillStyle=defCol||'rgba(13,31,58,0.85)';
+        ctx.globalAlpha=(al||0.85)*0.45; ctx.fill();
         ctx.globalAlpha=1;
-        ctx.strokeStyle='rgba(0,229,255,0.3)';
-        ctx.lineWidth=0.8;
-        ctx.stroke();
+        ctx.strokeStyle='rgba(0,229,255,0.25)'; ctx.lineWidth=0.8; ctx.stroke();
       }
 
-      /* Caroserie principala */
-      var p=[
-        proj(-80,-10,-25),proj(80,-10,-25),proj(80,-10,25),proj(-80,-10,25),
-        proj(-80,10,-25),proj(80,10,-25),proj(80,10,25),proj(-80,10,25)
-      ];
-      var ti=Math.floor((ang%360)/45)%8;
-      face([p[0],p[1],p[5],p[4]], fc('fata')||'rgba(13,31,58,0.85)',  ti);
-      face([p[2],p[3],p[7],p[6]], fc('spate')||'rgba(13,31,58,0.85)', (ti+4)%8);
-      face([p[0],p[3],p[7],p[4]], fc('Lateral')||'rgba(10,28,50,0.85)', (ti+2)%8);
-      face([p[1],p[2],p[6],p[5]], fc('Lateral')||'rgba(10,28,50,0.85)', (ti+6)%8);
-      face([p[4],p[5],p[6],p[7]], fc('capota')||'rgba(8,22,40,0.9)',    ti);
+      var ti=Math.floor((ang%360)/45)%nTex;
+      var p=[proj(-80,-10,-25),proj(80,-10,-25),proj(80,-10,25),proj(-80,-10,25),
+             proj(-80,10,-25),proj(80,10,-25),proj(80,10,25),proj(-80,10,25)];
+      face([p[0],p[1],p[5],p[4]], fc('fata')||'rgba(13,31,58,0.85)', ti);
+      face([p[2],p[3],p[7],p[6]], fc('spate')||'rgba(13,31,58,0.85)', (ti+4)%nTex);
+      face([p[0],p[3],p[7],p[4]], fc('Lateral')||'rgba(10,28,50,0.85)', (ti+2)%nTex);
+      face([p[1],p[2],p[6],p[5]], fc('Lateral')||'rgba(10,28,50,0.85)', (ti+6)%nTex);
+      face([p[4],p[5],p[6],p[7]], fc('capota')||'rgba(8,22,40,0.9)', ti);
       face([p[0],p[1],p[2],p[3]], 'rgba(4,10,20,0.95)', 0);
 
       /* Habitaclu */
-      var hab=[
-        proj(-38,-10,-20),proj(38,-10,-20),proj(38,-10,20),proj(-38,-10,20),
-        proj(-33,-30,-17),proj(33,-30,-17),proj(33,-30,17),proj(-33,-30,17)
-      ];
-      face([hab[4],hab[5],hab[6],hab[7]], fc('acop')||'rgba(5,15,30,0.9)', ti, 0.7);
+      var hab=[proj(-38,-10,-20),proj(38,-10,-20),proj(38,-10,20),proj(-38,-10,20),
+               proj(-33,-30,-17),proj(33,-30,-17),proj(33,-30,17),proj(-33,-30,17)];
+      face([hab[4],hab[5],hab[6],hab[7]], fc('acop')||'rgba(5,15,30,0.9)', ti, 0.65);
       face([hab[0],hab[1],hab[5],hab[4]], 'rgba(8,20,40,0.6)', 0, 0.5);
       face([hab[2],hab[3],hab[7],hab[6]], 'rgba(8,20,40,0.6)', 0, 0.5);
+
+      /* Geamuri */
+      ctx.strokeStyle='rgba(100,181,246,0.25)'; ctx.lineWidth=0.5;
+      var wl=[proj(-36,-12,-19),proj(0,-12,-19),proj(0,-12,19),proj(-36,-12,19)];
+      ctx.beginPath();ctx.moveTo(wl[0].px,wl[0].py);wl.forEach(function(p){ctx.lineTo(p.px,p.py);});ctx.closePath();ctx.stroke();
 
       /* Roți */
       [{x:-62,z:-26},{x:-62,z:26},{x:62,z:-26},{x:62,z:26}].forEach(function(w){
         var wp=proj(w.x,10,w.z);
-        ctx.beginPath(); ctx.ellipse(wp.px,wp.py,14*sc*25,9*sc*25,0.3,0,Math.PI*2);
-        ctx.fillStyle='#060a14'; ctx.fill();
-        ctx.strokeStyle='rgba(0,229,255,0.35)'; ctx.lineWidth=2; ctx.stroke();
-        /* Janta */
-        ctx.beginPath(); ctx.ellipse(wp.px,wp.py,7*sc*25,4.5*sc*25,0.3,0,Math.PI*2);
-        ctx.strokeStyle='rgba(150,180,210,0.4)'; ctx.lineWidth=1; ctx.stroke();
+        ctx.beginPath();ctx.ellipse(wp.px,wp.py,13*sc*22,8*sc*22,0.3,0,Math.PI*2);
+        ctx.fillStyle='#060a14';ctx.fill();ctx.strokeStyle='rgba(0,229,255,0.3)';ctx.lineWidth=1.8;ctx.stroke();
+        ctx.beginPath();ctx.ellipse(wp.px,wp.py,6*sc*22,4*sc*22,0.3,0,Math.PI*2);
+        ctx.strokeStyle='rgba(150,180,210,0.35)';ctx.lineWidth=1;ctx.stroke();
       });
 
       /* Faruri */
-      var flp=proj(82,0,-20), frp=proj(82,0,20);
-      [flp,frp].forEach(function(lp){
-        ctx.beginPath(); ctx.ellipse(lp.px,lp.py,8,5,0.2,0,Math.PI*2);
-        ctx.fillStyle='rgba(255,255,180,0.7)'; ctx.fill();
-        ctx.strokeStyle='rgba(255,255,100,0.5)'; ctx.lineWidth=1; ctx.stroke();
+      var fpos=[proj(82,0,-20),proj(82,0,20)];
+      fpos.forEach(function(fp){
+        ctx.beginPath();ctx.ellipse(fp.px,fp.py,8,5,0.2,0,Math.PI*2);
+        ctx.fillStyle='rgba(255,255,180,0.75)';ctx.fill();
+        ctx.strokeStyle='rgba(255,255,100,0.5)';ctx.lineWidth=0.8;ctx.stroke();
       });
 
-      /* Stopuri spate */
-      var slp=proj(-82,0,-20), srp=proj(-82,0,20);
-      [slp,srp].forEach(function(sp){
-        ctx.beginPath(); ctx.ellipse(sp.px,sp.py,7,4,0.2,0,Math.PI*2);
-        ctx.fillStyle='rgba(255,30,30,0.7)'; ctx.fill();
+      /* Stopuri */
+      var spos=[proj(-82,0,-20),proj(-82,0,20)];
+      spos.forEach(function(sp){
+        ctx.beginPath();ctx.ellipse(sp.px,sp.py,7,4,0.2,0,Math.PI*2);
+        ctx.fillStyle='rgba(255,30,30,0.75)';ctx.fill();
       });
 
-      /* HUD info */
-      ctx.fillStyle='rgba(0,229,255,0.65)'; ctx.font='9px monospace';
+      /* HUD */
+      var now = new Date();
+      var zp=function(n){return n<10?'0'+n:n;};
+      ctx.fillStyle='rgba(0,229,255,0.65)'; ctx.font='8px monospace';
       var m=document.getElementById('sScanModel');
-      ctx.fillText('3D: '+(m&&m.value?m.value:'VEHICUL'), 8, 14);
-      ctx.fillText('ROT: '+Math.round(ang%360)+'°  |  FRAMES: '+frames.length, 8, 26);
-      if(SS_GPS.lat){ ctx.fillStyle='rgba(76,175,80,0.7)'; ctx.font='8px monospace'; ctx.fillText('GPS: '+SS_GPS.lat.toFixed(5)+', '+SS_GPS.lng.toFixed(5), 8, H-8); }
+      ctx.fillText('3D: '+(m&&m.value?m.value:'VEHICUL'), 8, 13);
+      ctx.fillText(zp(now.getDate())+'.'+zp(now.getMonth()+1)+'.'+now.getFullYear()+
+        '  '+zp(now.getHours())+':'+zp(now.getMinutes())+':'+zp(now.getSeconds()), 8, 24);
+      if(SS.gps.lat){ ctx.fillStyle='rgba(76,175,80,0.7)'; ctx.font='7px monospace';
+        ctx.fillText('GPS: '+SS.gps.lat.toFixed(5)+', '+SS.gps.lng.toFixed(5)+' ±'+SS.gps.acc.toFixed(0)+'m', 8, 33); }
+      var plate=document.getElementById('sScanPlate');
+      if(plate&&plate.value){ ctx.fillStyle='rgba(255,193,7,0.8)'; ctx.font='bold 9px monospace';
+        ctx.fillText(plate.value, W-8-ctx.measureText(plate.value).width, 13); }
+      ctx.fillStyle='rgba(100,181,246,0.5)'; ctx.font='7px monospace';
+      ctx.fillText('ROT '+Math.round(ang%360)+'°  FRAMES:'+frames.length+'  LiDAR:'+(DEVICE.hasLiDAR?'ON':'N/A'), 8, H-6);
+      var dmgN=Object.keys(SS.zones).length;
+      if(dmgN>0){ ctx.fillStyle='rgba(244,67,54,0.7)'; ctx.font='bold 8px monospace';
+        ctx.fillText('DAUNE: '+dmgN+' ZONE', W-8-ctx.measureText('DAUNE: '+dmgN+' ZONE').width, H-6); }
 
-      /* Indicator daune */
-      var dmgCount=Object.keys(SS.zones).length;
-      if(dmgCount>0){
-        ctx.fillStyle='rgba(244,67,54,0.7)'; ctx.font='bold 9px monospace';
-        ctx.fillText('DAUNE DETECTATE: '+dmgCount+' ZONE', W-180, 14);
-      }
-
-      ang+=0.4;
-      SS.c3d.raf=requestAnimationFrame(frame);
+      ang += rotSpeed;
+      SS.c3d.raf = requestAnimationFrame(frame);
     }
     frame();
   }
 
-  /* Incarca texturile din frames */
-  if (framesToUse.length > 0) {
-    framesToUse.forEach(function(f, i) {
-      var img = new Image();
-      img.onload = function() {
-        texImages[i] = img;
-        loadCount++;
-        if (loadCount >= framesToUse.length) startAnim();
-      };
-      img.onerror = function() { loadCount++; if(loadCount>=framesToUse.length) startAnim(); };
-      img.src = f.dataUrl;
+  if (toLoad.length > 0) {
+    toLoad.forEach(function(f,i){
+      var img=new Image();
+      img.onload=function(){ texImgs[i]=img; loaded++; if(loaded>=toLoad.length) startAnim(); };
+      img.onerror=function(){ loaded++; if(loaded>=toLoad.length) startAnim(); };
+      img.src=f.dataUrl;
     });
-  } else {
-    startAnim();
-  }
+  } else { startAnim(); }
 }
 
-/* ── Progress UI helpers ── */
-function buildProgressUI(msg, pct) {
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:20px;background:#050c1a;">' +
-    '<div style="width:44px;height:44px;border:3px solid #1e3a5f;border-top-color:#4fc3f7;border-radius:50%;animation:spinScan 1s linear infinite;"></div>' +
-    '<div style="font-size:12px;color:#4fc3f7;font-family:monospace;text-align:center;">' + msg + '</div>' +
-    '<div style="width:100%;max-width:280px;background:#0a1628;border-radius:20px;height:8px;overflow:hidden;">' +
-    '<div style="height:100%;background:linear-gradient(90deg,#1565c0,#00e5ff);border-radius:20px;width:' + pct + '%;transition:width 0.3s;"></div></div>' +
-    '<div style="font-size:10px;color:#546e7a;font-family:monospace;">' + pct + '%</div>' +
-    '</div>';
+/* ═══════════════════════════════════════════════════
+   ZONE DAUNE
+   ═══════════════════════════════════════════════════ */
+function applyDamageToSilhouette(dmap) {
+  var c={ minor:['rgba(255,193,7,0.35)','#ffc107'], major:['rgba(255,87,34,0.45)','#ff5722'], total:['rgba(244,67,54,0.55)','#f44336'] };
+  var zm={ fata:'sdz-fata',spate:'sdz-spate',dr:'sdz-dr',st:'sdz-st',capota:'sdz-capota',portbagaj:'sdz-portbagaj',acop:'sdz-acop' };
+  Object.keys(dmap).forEach(function(z){
+    var sev=dmap[z]; var el=document.getElementById(zm[z]);
+    if(el&&sev){ el.setAttribute('fill',c[sev][0]); el.setAttribute('stroke',c[sev][1]); SS.zones[zm[z]]=sev; }
+  });
+  updateZoneList();
 }
 
-function buildDoneUI(frameCount, damageMap) {
-  var dmgZones = Object.keys(damageMap);
-  var sevCounts = {minor:0,major:0,total:0};
-  dmgZones.forEach(function(z){ if(damageMap[z]) sevCounts[damageMap[z]]++; });
-  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;padding:20px;background:#050c1a;">' +
-    '<div style="font-size:44px;">&#x2705;</div>' +
-    '<div style="font-size:14px;font-weight:700;color:#4caf50;font-family:monospace;letter-spacing:1px;">CARTOGRAFIERE COMPLETA</div>' +
-    '<div style="background:#0a1628;border:1px solid #1a2f4a;border-radius:8px;padding:12px;width:100%;max-width:280px;font-family:monospace;font-size:10px;">' +
-    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a2f4a;"><span>Frames procesate</span><b style="color:#4fc3f7">' + frameCount + '</b></div>' +
-    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a2f4a;"><span>Zone analizate</span><b style="color:#4fc3f7">7</b></div>' +
-    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a2f4a;"><span style="color:#ffc107">Daune minore</span><b style="color:#ffc107">' + sevCounts.minor + '</b></div>' +
-    '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a2f4a;"><span style="color:#ff5722">Daune majore</span><b style="color:#ff5722">' + sevCounts.major + '</b></div>' +
-    '<div style="display:flex;justify-content:space-between;padding:3px 0;"><span style="color:#f44336">Distrugere totala</span><b style="color:#f44336">' + sevCounts.total + '</b></div>' +
-    '</div>' +
-    '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;width:100%;max-width:280px;">' +
-    '<button onclick="scanView(\'2d\',document.querySelectorAll(\'.scan-view-tab\')[1])" style="flex:1;padding:8px;background:#0d1f3a;border:1px solid #4fc3f7;color:#4fc3f7;font-family:monospace;font-size:10px;border-radius:4px;cursor:pointer;">&#x1F5FA; Harta 2D</button>' +
-    '<button onclick="scanView(\'3d\',document.querySelectorAll(\'.scan-view-tab\')[2])" style="flex:1;padding:8px;background:#0d1f3a;border:1px solid #4fc3f7;color:#4fc3f7;font-family:monospace;font-size:10px;border-radius:4px;cursor:pointer;">&#x1F537; Model 3D</button>' +
-    '<button onclick="scanView(\'sil\',document.querySelectorAll(\'.scan-view-tab\')[3])" style="flex:1;padding:8px;background:#0d1f3a;border:1px solid #4fc3f7;color:#4fc3f7;font-family:monospace;font-size:10px;border-radius:4px;cursor:pointer;">&#x1F697; Silueta</button>' +
-    '</div></div>';
+function updateZoneList() {
+  var list=document.getElementById('sScanZoneList'); if(!list) return;
+  var entries=Object.entries(SS.zones);
+  if(!entries.length){ list.innerHTML='-- Nicio zona --'; return; }
+  var cols={minor:'#ffc107',major:'#ff5722',total:'#f44336'};
+  list.innerHTML=entries.map(function(e){
+    var el=document.getElementById(e[0]);
+    var n=el&&el.dataset?el.dataset.zone:e[0];
+    return '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1a2f4a;">'+
+      '<span>'+n+'</span><span style="color:'+cols[e[1]]+'">'+e[1].toUpperCase()+'</span></div>';
+  }).join('');
 }
+
+window.scanSetSev=function(btn,sev){ SS.sev=sev; document.querySelectorAll('.scan-sev-btn').forEach(function(b){ b.classList.toggle('scan-sev-active',b.dataset.sev===sev); }); };
+window.scanMarkZone=function(el){
+  var id=el.id,sev=SS.sev,cur=SS.zones[id];
+  if(cur===sev){ delete SS.zones[id]; el.setAttribute('fill','rgba(0,229,255,0.05)'); el.setAttribute('stroke','rgba(0,229,255,0.25)'); }
+  else{ SS.zones[id]=sev; var c={minor:['rgba(255,193,7,0.35)','#ffc107'],major:['rgba(255,87,34,0.45)','#ff5722'],total:['rgba(244,67,54,0.55)','#f44336']}; el.setAttribute('fill',c[sev][0]); el.setAttribute('stroke',c[sev][1]); }
+  updateZoneList();
+};
+
+/* ═══════════════════════════════════════════════════
+   VIEW SWITCHING
+   ═══════════════════════════════════════════════════ */
+window.scanView=function(v,btn){
+  document.querySelectorAll('.scan-view-tab').forEach(function(b){b.classList.remove('scan-view-active');});
+  if(btn) btn.classList.add('scan-view-active');
+  var map={'proc':'sViewProc','schita':'sViewSchita','3d':'sView3d','sil':'sViewSil','foto':'sViewFoto'};
+  Object.values(map).forEach(function(id){ var el=document.getElementById(id); if(el){ el.style.display='none'; el.classList.remove('scan-view-show'); } });
+  var t=document.getElementById(map[v]); if(t){ t.style.display='flex'; t.classList.add('scan-view-show'); }
+  if(v==='schita') setTimeout(scan2dResizeS,50);
+};
 
 /* ═══════════════════════════════════════════════════
    CANVAS 2D
    ═══════════════════════════════════════════════════ */
 function scan2dInitS(){
-  c2=document.getElementById('sScanCanvas2D');if(!c2)return;
-  x2=c2.getContext('2d');scan2dResizeS();
+  c2=document.getElementById('sScanCanvas2D'); if(!c2) return;
+  x2=c2.getContext('2d'); scan2dResizeS();
   c2.addEventListener('mousedown',function(e){scan2dDownS(scan2dPosS(e));});
-  c2.addEventListener('mousemove',function(e){var p=scan2dPosS(e);var el=document.getElementById('sScan2dXY');if(el)el.textContent=Math.round(p.x)+','+Math.round(p.y);if(SS.c2d.drawing)scan2dMoveS(p);});
+  c2.addEventListener('mousemove',function(e){
+    var p=scan2dPosS(e);
+    var el=document.getElementById('sScan2dXY'); if(el) el.textContent=Math.round(p.x)+','+Math.round(p.y);
+    if(SS.c2d.drawing) scan2dMoveS(p);
+  });
   c2.addEventListener('mouseup',scan2dUpS);
   c2.addEventListener('touchstart',function(e){e.preventDefault();scan2dDownS(scan2dTPosS(e));},{passive:false});
   c2.addEventListener('touchmove',function(e){e.preventDefault();scan2dMoveS(scan2dTPosS(e));},{passive:false});
   c2.addEventListener('touchend',scan2dUpS);
 }
-function scan2dResizeS(){if(!c2)return;var p=c2.parentElement;if(!p)return;c2.width=p.clientWidth||400;c2.height=Math.max((p.clientHeight||350)-38,150);scan2dRenderS();}
-function scan2dPosS(e){var r=c2.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
-function scan2dTPosS(e){return scan2dPosS(e.touches[0]);}
-window.scan2dTool=function(btn,t){SS.c2d.tool=t;document.querySelectorAll('.scan-tool-btn').forEach(function(b){b.classList.remove('scan-tool-active');});if(btn)btn.classList.add('scan-tool-active');};
-function scan2dDownS(p){
-  var s=SS.c2d,col=(document.getElementById('sTool2dColor')||{value:'#ff3d00'}).value;
-  s.drawing=true;s.sx=p.x;s.sy=p.y;
-  if(s.tool==='pen')s.cur={t:'pen',pts:[p],c:col,w:2};
-  else if(s.tool==='line')s.cur={t:'line',x1:p.x,y1:p.y,x2:p.x,y2:p.y,c:col,w:2};
-  else if(s.tool==='rect')s.cur={t:'rect',x:p.x,y:p.y,w:0,h:0,c:col};
-  else if(s.tool==='circle')s.cur={t:'circle',cx:p.x,cy:p.y,r:0,c:col,w:2};
-  else if(s.tool==='measure')s.cur={t:'meas',x1:p.x,y1:p.y,x2:p.x,y2:p.y,c:'#ffc107',w:1};
-  else if(s.tool==='text'){var txt=prompt('Text:');if(txt){s.objs.push({t:'text',x:p.x,y:p.y,txt:txt,c:col});scan2dCountS();scan2dRenderS();}s.drawing=false;}
+function scan2dResizeS(){
+  if(!c2) return;
+  var p=c2.parentElement; if(!p) return;
+  c2.width=p.clientWidth||400;
+  c2.height=Math.max((p.clientHeight||350)-38,150);
+  /* Daca schita e generata, o redesenam */
+  if(SS.processing.done && SS.c3d.frames.length>0) {
+    drawSchitaTehnica(SS.c3d.frames, SS.processing.damageMap);
+  }
 }
-function scan2dMoveS(p){var s=SS.c2d;if(!s.drawing||!s.cur)return;var o=s.cur;if(o.t==='pen')o.pts.push(p);else if(o.t==='line'||o.t==='meas'){o.x2=p.x;o.y2=p.y;}else if(o.t==='rect'){o.w=p.x-o.x;o.h=p.y-o.y;}else if(o.t==='circle'){var dx=p.x-o.cx,dy=p.y-o.cy;o.r=Math.sqrt(dx*dx+dy*dy);}scan2dRenderS();}
-function scan2dUpS(){var s=SS.c2d;if(!s.drawing)return;s.drawing=false;if(s.cur){s.objs.push(s.cur);s.cur=null;scan2dCountS();}scan2dRenderS();}
-function scan2dCountS(){var el=document.getElementById('sScan2dCount');if(el)el.textContent=SS.c2d.objs.length;}
-function scan2dUpdateCount(){scan2dCountS();}
-function scan2dRenderS(){
-  if(!x2||!c2)return;
-  /* Nu stergem — harta 2D generata ramane ca fundal */
-  var all=SS.c2d.objs.slice();if(SS.c2d.cur)all.push(SS.c2d.cur);
-  all.forEach(function(o){scan2dDrawS(o);});
+function scan2dPosS(e){ var r=c2.getBoundingClientRect(); return{x:e.clientX-r.left,y:e.clientY-r.top}; }
+function scan2dTPosS(e){ return scan2dPosS(e.touches[0]); }
+window.scan2dTool=function(btn,t){
+  SS.c2d.tool=t;
+  document.querySelectorAll('.scan-tool-btn').forEach(function(b){b.classList.remove('scan-tool-active');});
+  if(btn) btn.classList.add('scan-tool-active');
+  var toolEl=document.getElementById('sScan2dTool'); if(toolEl) toolEl.textContent=t;
+};
+function scan2dDownS(p){
+  var s=SS.c2d, col=(document.getElementById('sTool2dColor')||{value:'#f44336'}).value;
+  var sev=(document.getElementById('sDmgSeverSelect')||{value:'minor'}).value;
+  s.drawing=true; s.sx=p.x; s.sy=p.y;
+  if(s.tool==='pen')     s.cur={t:'pen',pts:[p],c:col,w:2};
+  else if(s.tool==='line')   s.cur={t:'line',x1:p.x,y1:p.y,x2:p.x,y2:p.y,c:col,w:1.5};
+  else if(s.tool==='rect')   s.cur={t:'rect',x:p.x,y:p.y,w:0,h:0,c:col};
+  else if(s.tool==='circle') s.cur={t:'circle',cx:p.x,cy:p.y,r:0,c:col,w:1.5};
+  else if(s.tool==='measure') s.cur={t:'meas',x1:p.x,y1:p.y,x2:p.x,y2:p.y,c:'#546e7a',w:1};
+  else if(s.tool==='arrow')  s.cur={t:'arrow',x1:p.x,y1:p.y,x2:p.x,y2:p.y,c:col,w:1.5,sev:sev};
+  else if(s.tool==='text'){
+    var txt=prompt('Text nota:');
+    if(txt){ s.objs.push({t:'text',x:p.x,y:p.y,txt:txt,c:col}); scan2dCountS(); scan2dDrawAnnot(); }
+    s.drawing=false;
+  }
+}
+function scan2dMoveS(p){
+  var s=SS.c2d; if(!s.drawing||!s.cur) return;
+  var o=s.cur;
+  if(o.t==='pen') o.pts.push(p);
+  else if(o.t==='line'||o.t==='meas'||o.t==='arrow'){o.x2=p.x;o.y2=p.y;}
+  else if(o.t==='rect'){o.w=p.x-o.x;o.h=p.y-o.y;}
+  else if(o.t==='circle'){var dx=p.x-o.cx,dy=p.y-o.cy;o.r=Math.sqrt(dx*dx+dy*dy);}
+  scan2dDrawAnnot();
+}
+function scan2dUpS(){
+  var s=SS.c2d; if(!s.drawing) return;
+  s.drawing=false;
+  if(s.cur){ s.objs.push(s.cur); s.cur=null; scan2dCountS(); }
+  scan2dDrawAnnot();
+}
+function scan2dCountS(){ var el=document.getElementById('sScan2dCount'); if(el) el.textContent=SS.c2d.objs.length; }
+function scan2dDrawAnnot(){
+  /* Redesenam schita + adnotari */
+  if(SS.processing.done && SS.c3d.frames.length>0) {
+    drawSchitaTehnica(SS.c3d.frames, SS.processing.damageMap);
+  } else if(c2&&x2) {
+    var all=SS.c2d.objs.slice(); if(SS.c2d.cur) all.push(SS.c2d.cur);
+    all.forEach(function(o){ scan2dDrawS(o); });
+  }
 }
 function scan2dDrawS(o){
-  x2.strokeStyle=o.c||'#ff3d00';x2.fillStyle=o.c||'#ff3d00';x2.lineWidth=o.w||2;x2.lineCap='round';x2.lineJoin='round';
-  if(o.t==='pen'){if(!o.pts||o.pts.length<2)return;x2.beginPath();x2.moveTo(o.pts[0].x,o.pts[0].y);o.pts.forEach(function(p){x2.lineTo(p.x,p.y);});x2.stroke();}
-  else if(o.t==='line'){x2.beginPath();x2.moveTo(o.x1,o.y1);x2.lineTo(o.x2,o.y2);x2.stroke();}
-  else if(o.t==='rect'){x2.beginPath();x2.strokeRect(o.x,o.y,o.w,o.h);}
-  else if(o.t==='circle'){x2.beginPath();x2.arc(o.cx,o.cy,o.r,0,Math.PI*2);x2.stroke();}
-  else if(o.t==='text'){x2.font='12px monospace';x2.fillText(o.txt,o.x,o.y);}
-  else if(o.t==='meas'){x2.beginPath();x2.moveTo(o.x1,o.y1);x2.lineTo(o.x2,o.y2);x2.stroke();var dx=o.x2-o.x1,dy=o.y2-o.y1,d=Math.sqrt(dx*dx+dy*dy).toFixed(0);x2.font='10px monospace';x2.fillStyle='#ffc107';x2.fillText(d+'px',(o.x1+o.x2)/2+4,(o.y1+o.y2)/2-4);}
+  if(!x2) return;
+  x2.strokeStyle=o.c||'#f44336'; x2.fillStyle=o.c||'#f44336';
+  x2.lineWidth=o.w||1.5; x2.lineCap='round'; x2.lineJoin='round';
+  if(o.t==='pen'){ if(!o.pts||o.pts.length<2) return; x2.beginPath(); x2.moveTo(o.pts[0].x,o.pts[0].y); o.pts.forEach(function(p){x2.lineTo(p.x,p.y);}); x2.stroke(); }
+  else if(o.t==='line'){ x2.beginPath(); x2.moveTo(o.x1,o.y1); x2.lineTo(o.x2,o.y2); x2.stroke(); }
+  else if(o.t==='rect'){ x2.beginPath(); x2.strokeRect(o.x,o.y,o.w,o.h); }
+  else if(o.t==='circle'){ x2.beginPath(); x2.arc(o.cx,o.cy,o.r,0,Math.PI*2); x2.stroke(); }
+  else if(o.t==='text'){
+    x2.font='bold 9px monospace'; x2.fillStyle='rgba(255,255,255,0.9)';
+    x2.fillRect(o.x-2,o.y-10,x2.measureText(o.txt).width+4,13);
+    x2.fillStyle=o.c; x2.fillText(o.txt,o.x,o.y);
+  }
+  else if(o.t==='meas'){
+    x2.beginPath(); x2.moveTo(o.x1,o.y1); x2.lineTo(o.x2,o.y2); x2.stroke();
+    var dx=o.x2-o.x1,dy=o.y2-o.y1,d=Math.sqrt(dx*dx+dy*dy).toFixed(0);
+    x2.font='8px monospace'; x2.fillStyle='#333';
+    x2.fillText(d+'px',(o.x1+o.x2)/2+2,(o.y1+o.y2)/2-3);
+  }
+  else if(o.t==='arrow'){
+    /* Sageata cu eticheta severitate */
+    var dx=o.x2-o.x1,dy=o.y2-o.y1,len=Math.sqrt(dx*dx+dy*dy); if(len<1) return;
+    var nx=dx/len,ny=dy/len;
+    x2.beginPath(); x2.moveTo(o.x1,o.y1); x2.lineTo(o.x2,o.y2); x2.stroke();
+    /* Cap sageata */
+    var as=8;
+    x2.beginPath();
+    x2.moveTo(o.x2,o.y2);
+    x2.lineTo(o.x2-nx*as-ny*as*0.5,o.y2-ny*as+nx*as*0.5);
+    x2.lineTo(o.x2-nx*as+ny*as*0.5,o.y2-ny*as-nx*as*0.5);
+    x2.closePath(); x2.fill();
+    /* Label */
+    if(o.sev){
+      var sc={minor:'#f9a825',major:'#e64a19',total:'#c62828'};
+      x2.font='bold 8px monospace'; x2.fillStyle=sc[o.sev]||o.c;
+      x2.fillText(o.sev.toUpperCase(),o.x2+3,o.y2-3);
+    }
+  }
 }
-window.scan2dUndo=function(){if(!SS.c2d.objs.length)return;SS.c2d.objs.pop();scan2dCountS();};
-window.scan2dClear=function(){if(!confirm('Stergi canvas-ul?'))return;SS.c2d.objs=[];scan2dCountS();if(c2&&x2){x2.clearRect(0,0,c2.width,c2.height);}};
+window.scan2dUndo=function(){ if(!SS.c2d.objs.length) return; SS.c2d.objs.pop(); scan2dCountS(); scan2dDrawAnnot(); };
 
 /* ═══════════════════════════════════════════════════
-   SEVERITATE + ZONE
-   ═══════════════════════════════════════════════════ */
-window.scanSetSev=function(btn,sev){SS.sev=sev;document.querySelectorAll('.scan-sev-btn').forEach(function(b){b.classList.toggle('scan-sev-active',b.dataset.sev===sev);});};
-window.scanMarkZone=function(el){
-  var id=el.id,sev=SS.sev,cur=SS.zones[id];
-  if(cur===sev){delete SS.zones[id];el.setAttribute('fill','rgba(0,229,255,0.05)');el.setAttribute('stroke','rgba(0,229,255,0.25)');}
-  else{SS.zones[id]=sev;var c={minor:['rgba(255,193,7,0.35)','#ffc107'],major:['rgba(255,87,34,0.45)','#ff5722'],total:['rgba(244,67,54,0.55)','#f44336']};el.setAttribute('fill',c[sev][0]);el.setAttribute('stroke',c[sev][1]);}
-  updateZoneList();
-};
-window.scanView=function(v,btn){
-  document.querySelectorAll('.scan-view-tab').forEach(function(b){b.classList.remove('scan-view-active');});
-  if(btn)btn.classList.add('scan-view-active');
-  var map={'proc':'sViewProc','2d':'sView2d','3d':'sView3d','sil':'sViewSil','foto':'sViewFoto'};
-  Object.values(map).forEach(function(id){var el=document.getElementById(id);if(el){el.style.display='none';el.classList.remove('scan-view-show');}});
-  var t=document.getElementById(map[v]);if(t){t.style.display='flex';t.classList.add('scan-view-show');}
-  if(v==='2d')setTimeout(scan2dResizeS,50);
-};
-
-/* ═══════════════════════════════════════════════════
-   FOTO/GALERIE
+   FOTO / GALERIE
    ═══════════════════════════════════════════════════ */
 function scanAddPhotoS(url,lbl){
   SS.photos.push({id:Date.now(),url:url,lbl:lbl});
-  try{var s=JSON.parse(sessionStorage.getItem('scanPhotos')||'[]');s.push({id:SS.photos[SS.photos.length-1].id,url:url,lbl:lbl});sessionStorage.setItem('scanPhotos',JSON.stringify(s));}catch(e){}
+  try{ var s=JSON.parse(sessionStorage.getItem('scanPhotos')||'[]'); s.push({id:SS.photos[SS.photos.length-1].id,url:url,lbl:lbl}); sessionStorage.setItem('scanPhotos',JSON.stringify(s)); }catch(e){}
   scanRenderPhotosS();
 }
-window.scanDelPhoto=function(id){SS.photos=SS.photos.filter(function(p){return p.id!==id;});scanRenderPhotosS();};
+window.scanDelPhoto=function(id){ SS.photos=SS.photos.filter(function(p){return p.id!==id;}); scanRenderPhotosS(); };
 function scanRenderPhotosS(){
   var cnt=SS.photos.length;
-  ['sScanPhotoCount','sScanFotoCount'].forEach(function(i){var el=document.getElementById(i);if(el)el.textContent=cnt;});
+  ['sScanPhotoCount','sScanFotoCount'].forEach(function(i){ var el=document.getElementById(i); if(el) el.textContent=cnt; });
   var mini=document.getElementById('sScanPhotosMini');
-  if(mini){mini.innerHTML='';SS.photos.slice(-6).forEach(function(p){mini.innerHTML+='<div class="scan-photo-mini"><img src="'+p.url+'" alt=""><button class="scan-photo-mini-del" onclick="scanDelPhoto('+p.id+')">x</button></div>';});}
+  if(mini){ mini.innerHTML=''; SS.photos.slice(-6).forEach(function(p){ mini.innerHTML+='<div class="scan-photo-mini"><img src="'+p.url+'" alt=""><button class="scan-photo-mini-del" onclick="scanDelPhoto('+p.id+')">x</button></div>'; }); }
   var grid=document.getElementById('sScanFotoGrid');
   if(grid){
     grid.innerHTML='';
     SS.photos.forEach(function(p){
-      grid.innerHTML+='<div style="aspect-ratio:1;border:1px solid #1e3a5f;border-radius:4px;overflow:hidden;position:relative;">' +
-        '<img src="'+p.url+'" style="width:100%;height:100%;object-fit:cover;" alt="'+p.lbl+'">' +
-        '<button onclick="scanDelPhoto('+p.id+')" style="position:absolute;top:2px;right:2px;background:rgba(198,40,40,.9);color:#fff;border:none;border-radius:50%;width:15px;height:15px;cursor:pointer;font-size:9px;padding:0;">x</button>' +
-        '<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);font-size:7px;color:#90caf9;padding:2px 3px;font-family:monospace;overflow:hidden;white-space:nowrap;">'+p.lbl+'</div>' +
+      grid.innerHTML+='<div style="aspect-ratio:1;border:1px solid #1e3a5f;border-radius:3px;overflow:hidden;position:relative;">'+
+        '<img src="'+p.url+'" style="width:100%;height:100%;object-fit:cover;" alt="">'+
+        '<button onclick="scanDelPhoto('+p.id+')" style="position:absolute;top:1px;right:1px;background:rgba(198,40,40,.9);color:#fff;border:none;border-radius:50%;width:13px;height:13px;cursor:pointer;font-size:8px;padding:0;">x</button>'+
+        '<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.65);font-size:7px;color:#90caf9;padding:1px 3px;font-family:monospace;overflow:hidden;white-space:nowrap;">'+p.lbl+'</div>'+
         '</div>';
     });
   }
 }
 window.scanRestorePhotos=function(){
-  try{var s=JSON.parse(sessionStorage.getItem('scanPhotos')||'[]');if(s.length){SS.photos=s;scanRenderPhotosS();scanToastS('Restaurate '+s.length+' frame-uri','ok');}}catch(e){}
+  try{ var s=JSON.parse(sessionStorage.getItem('scanPhotos')||'[]'); if(s.length){ SS.photos=s; scanRenderPhotosS(); scanToastS('Restaurate '+s.length+' frames','ok'); } }catch(e){}
 };
+
+/* ═══════════════════════════════════════════════════
+   PROGRESS / DONE UI
+   ═══════════════════════════════════════════════════ */
+function buildProgressUI(msg, pct) {
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'+
+    'height:100%;gap:14px;padding:20px;background:#050c1a;">'+
+    '<div style="width:40px;height:40px;border:3px solid #1e3a5f;border-top-color:#4fc3f7;'+
+    'border-radius:50%;animation:spinScan 1s linear infinite;"></div>'+
+    '<div style="font-size:11px;color:#4fc3f7;font-family:monospace;text-align:center;">'+msg+'</div>'+
+    '<div style="width:100%;max-width:260px;background:#0a1628;border-radius:15px;height:7px;overflow:hidden;">'+
+    '<div style="height:100%;background:linear-gradient(90deg,#1565c0,#00e5ff);border-radius:15px;'+
+    'width:'+pct+'%;transition:width 0.4s;"></div></div>'+
+    '<div style="font-size:9px;color:#546e7a;font-family:monospace;">'+pct+'%</div></div>';
+}
+
+function buildDoneUI(nFrames, dmap) {
+  var c={minor:0,major:0,total:0};
+  Object.values(dmap).forEach(function(v){ if(v) c[v]++; });
+  return '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;'+
+    'height:100%;gap:10px;padding:18px;background:#050c1a;">'+
+    '<div style="font-size:40px;">&#x2705;</div>'+
+    '<div style="font-size:13px;font-weight:700;color:#4caf50;font-family:monospace;letter-spacing:1px;">CARTOGRAFIERE COMPLETA</div>'+
+    '<div style="background:#0a1628;border:1px solid #1a2f4a;border-radius:7px;padding:10px;'+
+    'width:100%;max-width:260px;font-family:monospace;font-size:9px;">'+
+    '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1a2f4a;">'+
+    '<span>Frames procesate</span><b style="color:#4fc3f7">'+nFrames+'</b></div>'+
+    '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1a2f4a;">'+
+    '<span style="color:#ffc107">Daune minore</span><b style="color:#ffc107">'+c.minor+'</b></div>'+
+    '<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #1a2f4a;">'+
+    '<span style="color:#ff5722">Daune majore</span><b style="color:#ff5722">'+c.major+'</b></div>'+
+    '<div style="display:flex;justify-content:space-between;padding:2px 0;">'+
+    '<span style="color:#f44336">Distrugere totala</span><b style="color:#f44336">'+c.total+'</b></div></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;width:100%;max-width:260px;">'+
+    '<button onclick="scanView(\'schita\',document.querySelectorAll(\'.scan-view-tab\')[1])" '+
+    'style="padding:8px;background:#1a237e;border:1px solid #4fc3f7;color:#fff;font-family:monospace;font-size:9px;border-radius:4px;cursor:pointer;">&#x1F4D0; Schita 2D</button>'+
+    '<button onclick="scanView(\'3d\',document.querySelectorAll(\'.scan-view-tab\')[2])" '+
+    'style="padding:8px;background:#0d1f3a;border:1px solid #4fc3f7;color:#4fc3f7;font-family:monospace;font-size:9px;border-radius:4px;cursor:pointer;">&#x1F537; Model 3D</button>'+
+    '<button onclick="scanView(\'sil\',document.querySelectorAll(\'.scan-view-tab\')[3])" '+
+    'style="padding:8px;background:#0d1f3a;border:1px solid #4fc3f7;color:#4fc3f7;font-family:monospace;font-size:9px;border-radius:4px;cursor:pointer;">&#x1F697; Silueta</button>'+
+    '<button onclick="scanExportPDF()" '+
+    'style="padding:8px;background:#880e4f;border:1px solid #f48fb1;color:#fff;font-family:monospace;font-size:9px;border-radius:4px;cursor:pointer;">&#x1F4C4; PDF Dosar</button>'+
+    '</div></div>';
+}
 
 /* ═══════════════════════════════════════════════════
    EXPORT
    ═══════════════════════════════════════════════════ */
+window.scanExportSchita=function(){
+  if(!c2){ scanToastS('Genereaza mai intai o schita.','err'); return; }
+  var a=document.createElement('a'); a.href=c2.toDataURL('image/png');
+  a.download='schita_tehnica_'+( SS.meta.plate||'vehicul')+'_'+Date.now()+'.png'; a.click();
+  scanToastS('Schita PNG exportata!','ok');
+};
 window.scanExportJSON=function(){
-  var d={ts:new Date().toISOString(),device:DEVICE.model,gps:{lat:SS_GPS.lat,lng:SS_GPS.lng,acc:SS_GPS.acc},
-    vehicul:{nr:(document.getElementById('sScanPlate')||{}).value,model:(document.getElementById('sScanModel')||{}).value,tip:(document.getElementById('sScanType')||{}).value},
-    zone:SS.zones,note:(document.getElementById('sScanNotes')||{}).value,nr_frames:SS.photos.length};
-  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));
-  a.download='scanare_'+(d.vehicul.nr||'vehicul')+'_'+Date.now()+'.json';a.click();
+  var d={ts:new Date().toISOString(),device:DEVICE.model,gps:SS.meta.gpsLat?{lat:SS.meta.gpsLat,lng:SS.meta.gpsLng,acc:SS.meta.gpsAcc}:null,
+    vehicul:{nr:SS.meta.plate,model:SS.meta.model,culoare:SS.meta.color},
+    officer:SS.meta.officer, date:SS.meta.date, time:SS.meta.time,
+    zone:SS.zones, note:(document.getElementById('sScanNotes')||{}).value, nr_frames:SS.photos.length};
+  var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));
+  a.download='cartografiere_'+( SS.meta.plate||'vehicul')+'_'+Date.now()+'.json'; a.click();
   scanToastS('JSON exportat!','ok');
 };
-window.scanExport2D=function(){
-  if(!c2){scanToastS('Genereaza mai intai cartografierea 2D.','err');return;}
-  var a=document.createElement('a');a.href=c2.toDataURL('image/png');
-  a.download='harta2d_'+Date.now()+'.png';a.click();scanToastS('PNG exportat!','ok');
-};
 window.scanExportPDF=function(){
-  var plate=(document.getElementById('sScanPlate')||{}).value||'-';
-  var model=(document.getElementById('sScanModel')||{}).value||'-';
-  var notes=(document.getElementById('sScanNotes')||{}).value||'-';
+  var plate=SS.meta.plate||'-', model=SS.meta.model||'-', color=SS.meta.color||'-';
+  var officer=SS.meta.officer||'-', notes=(document.getElementById('sScanNotes')||{}).value||'-';
   var zones=Object.entries(SS.zones).map(function(e){var el=document.getElementById(e[0]);return(el&&el.dataset?el.dataset.zone:e[0])+': '+e[1].toUpperCase();}).join('\n')||'-';
-  var gpsStr=SS_GPS.lat?SS_GPS.lat.toFixed(6)+', '+SS_GPS.lng.toFixed(6)+' ('+SS_GPS.acc.toFixed(0)+'m)':'Indisponibil';
-  var map2d=c2?'<h2>Harta 2D</h2><img src="'+c2.toDataURL('image/png')+'" style="max-width:100%;border:1px solid #ccc;">':'';
+  var gpsStr=SS.meta.gpsLat?SS.meta.gpsLat.toFixed(6)+', '+SS.meta.gpsLng.toFixed(6)+' (±'+SS.meta.gpsAcc.toFixed(0)+'m)':'Indisponibil';
+  var schitaImg=c2?'<h2>Schema Tehnica 2D</h2><img src="'+c2.toDataURL('image/png')+'" style="max-width:100%;border:2px solid #1a237e;">':'';
   var w=window.open('','_blank');
-  w.document.write('<!DOCTYPE html><html><head><title>Raport '+plate+'</title><style>body{font-family:monospace;padding:20px;max-width:900px;margin:0 auto;}table{width:100%;border-collapse:collapse;}td,th{border:1px solid #ccc;padding:6px;}th{background:#f0f0f0;}pre{background:#f5f5f5;padding:8px;}img{max-width:100%;}h1,h2{color:#1565c0;}@media print{.np{display:none}}</style></head><body>'+
-    '<h1>RAPORT CARTOGRAFIERE VEHICUL AVARIAT</h1><p>Data: '+new Date().toLocaleString('ro-RO')+'</p>'+
-    '<p><b>Dispozitiv:</b> '+DEVICE.model+'</p>'+
+  w.document.write('<!DOCTYPE html><html><head><title>Dosar Accident '+plate+'</title>'+
+    '<style>body{font-family:monospace;padding:20px;max-width:900px;margin:0 auto;}'+
+    'h1{color:#1a237e;border-bottom:3px solid #1a237e;padding-bottom:6px;}'+
+    'h2{color:#1565c0;margin-top:16px;}'+
+    'table{width:100%;border-collapse:collapse;margin:8px 0;}'+
+    'td,th{border:1px solid #ccc;padding:6px;font-size:11px;}'+
+    'th{background:#e8eaf6;color:#1a237e;}'+
+    'pre{background:#f5f5f5;padding:8px;font-size:10px;}'+
+    'img{max-width:100%;}'+
+    '.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;}'+
+    '.minor{background:#fff8e1;color:#f57f17;}.major{background:#fbe9e7;color:#bf360c;}.total{background:#ffebee;color:#b71c1c;}'+
+    '@media print{.np{display:none}}</style></head><body>'+
+    '<h1>DOSAR CARTOGRAFIERE VEHICUL AVARIAT</h1>'+
+    '<p style="color:#546e7a;font-size:10px;">Generat: '+new Date().toLocaleString('ro-RO')+' | Biroul Rutier Arad | ScetchACC v4.0</p>'+
+    '<h2>Date Vehicul si Dosar</h2>'+
     '<table><tr><th>Camp</th><th>Valoare</th></tr>'+
-    '<tr><td>Nr. Inmatriculare</td><td><b>'+plate+'</b></td></tr>'+
-    '<tr><td>Marca/Model</td><td>'+model+'</td></tr>'+
-    '<tr><td>GPS Locatie</td><td>'+gpsStr+'</td></tr>'+
+    '<tr><td>Nr. Inmatriculare</td><td><b style="font-size:14px;color:#1a237e">'+plate+'</b></td></tr>'+
+    '<tr><td>Marca / Model</td><td>'+model+'</td></tr>'+
+    '<tr><td>Culoare</td><td>'+color+'</td></tr>'+
+    '<tr><td>Data / Ora</td><td>'+SS.meta.date+' la '+SS.meta.time+'</td></tr>'+
+    '<tr><td>Ofiter / Agent</td><td>'+officer+'</td></tr>'+
+    '<tr><td>Coordonate GPS</td><td>'+gpsStr+'</td></tr>'+
+    '<tr><td>Dispozitiv scanare</td><td>'+DEVICE.model+' | LiDAR: '+(DEVICE.hasLiDAR?'ACTIV':'N/A')+'</td></tr>'+
     '<tr><td>Frames video procesate</td><td>'+SS.photos.length+'</td></tr>'+
     '</table>'+
-    '<h2>Zone Avariate Detectate</h2><pre>'+zones+'</pre>'+
+    '<h2>Zone Avariate Detectate</h2>'+
+    '<pre>'+zones+'</pre>'+
     '<h2>Observatii</h2><pre>'+notes+'</pre>'+
-    map2d+
-    '<h2>Frame-uri Video ('+SS.photos.length+')</h2>'+
-    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">'+
-    SS.photos.slice(0,12).map(function(p){return '<div><img src="'+p.url+'" style="width:100%;"><div style="font-size:8px;color:#666;text-align:center;">'+p.lbl+'</div></div>';}).join('')+
+    schitaImg+
+    '<h2>Frame-uri Video ('+Math.min(SS.photos.length,12)+' din '+SS.photos.length+')</h2>'+
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;">'+
+    SS.photos.slice(0,12).map(function(p){return '<div><img src="'+p.url+'" style="width:100%;border:1px solid #ccc;"><div style="font-size:7px;color:#666;text-align:center;">'+p.lbl+'</div></div>';}).join('')+
     '</div>'+
-    '<button class="np" onclick="window.print()" style="margin-top:20px;padding:10px 20px;background:#1565c0;color:#fff;border:none;cursor:pointer;font-size:12px;">Printeaza / Salveaza PDF</button>'+
+    '<button class="np" onclick="window.print()" style="margin-top:20px;padding:10px 24px;background:#1a237e;color:#fff;border:none;cursor:pointer;font-size:11px;border-radius:4px;">&#x1F5A8; Printeaza / Salveaza PDF</button>'+
     '</body></html>');
   w.document.close();
 };
+
 window.scanReset=function(){
-  if(!confirm('Resetezi toate datele?'))return;
-  SS.photos=[];SS.zones={};SS.c2d.objs=[];SS.video={recording:false,mediaRecorder:null,chunks:[],blob:null,timerInterval:null,seconds:0};
-  try{sessionStorage.removeItem('scanPhotos');}catch(e){}
-  document.querySelectorAll('.sdmg-zone').forEach(function(el){el.setAttribute('fill','rgba(0,229,255,0.05)');el.setAttribute('stroke','rgba(0,229,255,0.25)');});
-  updateZoneList();scanRenderPhotosS();
-  if(c2&&x2){x2.clearRect(0,0,c2.width,c2.height);scan2dRenderS();}
-  if(SS.c3d.raf){cancelAnimationFrame(SS.c3d.raf);SS.c3d.on=false;}
-  var ph=document.getElementById('sPlaceholder3d');if(ph)ph.style.display='';
+  if(!confirm('Resetezi toate datele dosarului?')) return;
+  SS.photos=[];SS.zones={};SS.c2d.objs=[];SS.processing={done:false,damageMap:{}};
+  SS.meta={date:'',time:'',plate:'',model:'',color:'',officer:''};
+  try{ sessionStorage.removeItem('scanPhotos'); }catch(e){}
+  document.querySelectorAll('.sdmg-zone').forEach(function(el){ el.setAttribute('fill','rgba(0,229,255,0.05)'); el.setAttribute('stroke','rgba(0,229,255,0.25)'); });
+  updateZoneList(); scanRenderPhotosS();
+  if(c2&&x2){ x2.clearRect(0,0,c2.width,c2.height); }
+  if(SS.c3d.raf){ cancelAnimationFrame(SS.c3d.raf); }
+  var ph=document.getElementById('sPlaceholder3d'); if(ph) ph.style.display='';
   var proc=document.getElementById('sProcStatus');
-  if(proc)proc.innerHTML='<div style="font-size:44px;opacity:0.3">&#x1F3A5;</div><div style="font-size:12px;color:#546e7a;font-family:monospace;text-align:center;">Filmeaza vehiculul 360° si cartografierea se va genera automat</div>';
-  ['sScanPlate','sScanModel','sScanNotes'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
-  scanToastS('Date resetate.');
+  if(proc) proc.innerHTML='<div style="font-size:38px;opacity:0.2">&#x1F3A5;</div>'+
+    '<div style="font-size:11px;color:#546e7a;font-family:monospace;text-align:center;max-width:230px;">'+
+    'Filmeaza vehiculul 360° si schita tehnica se va genera automat</div>';
+  ['sScanPlate','sScanModel','sScanColor','sScanOfficer','sScanNotes'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  var prev=document.getElementById('scanCamPreview');
+  if(prev) prev.innerHTML='<div style="font-size:28px;opacity:0.35">&#x1F3A5;</div>'+
+    '<p style="font-size:9px;color:#4fc3f7;opacity:0.6;font-family:monospace;text-align:center;padding:0 8px;margin:0;">Apasa FILMARE 360° pentru a incepe</p>';
+  scanToastS('Dosar resetat.');
 };
 
 /* ═══════════════════════════════════════════════════
@@ -3914,25 +4301,22 @@ document.addEventListener('DOMContentLoaded',function(){
     btn.addEventListener('click',function(){
       var tab=document.getElementById('tab-scanare');
       if(tab){
-        if(tab.querySelector('.scan-wrap')){
-          setTimeout(function(){if(!c2)scan2dInitS();else scan2dResizeS();},80);
-        } else {
-          window.scanEnterTab();
-        }
+        if(tab.querySelector('.scan-wrap')){ setTimeout(function(){ if(!c2) scan2dInitS(); else scan2dResizeS(); },80); }
+        else { window.scanEnterTab(); }
       }
     });
   });
   window.addEventListener('resize',function(){
     var tab=document.getElementById('tab-scanare');
-    if(tab&&tab.classList.contains('active'))scan2dResizeS();
+    if(tab&&tab.classList.contains('active')) scan2dResizeS();
   });
 });
 
 function scanToastS(msg,type){
-  var tc=document.getElementById('toast-container');if(!tc)return;
+  var tc=document.getElementById('toast-container'); if(!tc) return;
   var t=document.createElement('div');
   t.className='toast'+(type==='ok'?' toast-success':type==='err'?' toast-error':'');
-  t.textContent=msg;tc.appendChild(t);
-  setTimeout(function(){if(t.parentNode)t.parentNode.removeChild(t);},3000);
+  t.textContent=msg; tc.appendChild(t);
+  setTimeout(function(){ if(t.parentNode) t.parentNode.removeChild(t); },3000);
 }
 })();
