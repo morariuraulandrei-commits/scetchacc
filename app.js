@@ -3123,6 +3123,7 @@ window.scanRequestPermissions = async function() {
       setTimeout(function(){
         scan2dInitS();
         scanStartGPS();
+        if(window.scanRestorePhotos) window.scanRestorePhotos();
       }, 100);
     }
   } else {
